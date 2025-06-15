@@ -94,13 +94,13 @@ def links2subgraphs(A, graphs, params, max_label_value=None):
                     txn.put(str_id, serialize(datum))
 
     for split_name, split in graphs.items():
-        logging.info(f"Extracting enclosing subgraphs for positive links in {split_name} set")
+        print(f"Extracting enclosing subgraphs for positive links in {split_name} set")
         labels = np.ones(len(split['pos']))
         db_name_pos = split_name + '_pos'
         split_env = env.open_db(db_name_pos.encode())
         extraction_helper(A, split['pos'], labels, split_env)
 
-        logging.info(f"Extracting enclosing subgraphs for negative links in {split_name} set")
+        print(f"Extracting enclosing subgraphs for negative links in {split_name} set")
         labels = np.zeros(len(split['neg']))
         db_name_neg = split_name + '_neg'
         split_env = env.open_db(db_name_neg.encode())
