@@ -1,0 +1,9 @@
+tqdm
+lmdb
+numpy
+scipy
+torch
+networkx
+dgl
+matplotlib
+git+https://github.com/phungbminh/ogb.git@master#egg=ogb
