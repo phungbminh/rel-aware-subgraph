@@ -49,7 +49,7 @@ def main():
     parser.add_argument('--num-bases', type=int, default=None,
                         help='Number of bases for CompGCNConv')
     # Subgraph extraction params
-    parser.add_argument('--max-links', type=int, default=None)
+    parser.add_argument('--max-links', type=int, default=10)
     parser.add_argument('--num-neg', type=int, default=1)
     parser.add_argument('--constrained-neg-prob', type=float, default=0.5)
     parser.add_argument('--hop', type=int, default=2)
