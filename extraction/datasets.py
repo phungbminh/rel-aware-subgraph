@@ -85,7 +85,7 @@ def generate_subgraph_datasets(params, splits=['train', 'valid', 'test'], max_la
     # 4. Negative sampling
     #for split_name, info in graphs.items():
     for split_name, info in tqdm(graphs.items(), desc="Sampling negatives", total=len(graphs)):
-        logging.info(f"Sampling negative links for OGB-BioKG split '{split_name}'")
+        #logging.info(f"Sampling negative links for OGB-BioKG split '{split_name}'")
         pos_edges = info['pos']
         _, neg_edges = sample_neg(
             adj_list=adj_list,
