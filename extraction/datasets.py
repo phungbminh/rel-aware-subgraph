@@ -83,10 +83,10 @@ def generate_subgraph_datasets(params, splits=['train', 'valid', 'test'], max_la
         adj_list.append(adj)
 
     # 4. Negative sampling
-    #for split_name, info in graphs.items():
-    for split_name, info in tqdm(graphs.items(), desc="Sampling negatives"):
+    for split_name, info in graphs.items():
+    #for split_name, info in tqdm(graphs.items(), desc="Sampling negatives"):
     #for split_name, info in tqdm(graphs.items(), desc="Sampling negatives", total=len(graphs)):
-        #logging.info(f"Sampling negative links for OGB-BioKG split '{split_name}'")
+        #print(f"Sampling negative links for OGB-BioKG split '{split_name}'")
         pos_edges = info['pos']
         _, neg_edges = sample_neg(
             adj_list=adj_list,
@@ -161,18 +161,18 @@ class SubgraphDataset(Dataset):
             self.max_num_pruned_nodes = struct.unpack('f', txn.get('max_num_pruned_nodes'.encode()))
             self.std_num_pruned_nodes = struct.unpack('f', txn.get('std_num_pruned_nodes'.encode()))
 
-        logging.info(f"Max distance from sub : {self.max_n_label[0]}, Max distance from obj : {self.max_n_label[1]}")
+        print(f"Max distance from sub : {self.max_n_label[0]}, Max distance from obj : {self.max_n_label[1]}")
 
-        logging.info('=====================')
-        logging.info(
+        print('=====================')
+        print(
             f"Subgraph size stats: \n Avg size {self.avg_subgraph_size}, \n Min size {self.min_subgraph_size}, \n Max size {self.max_subgraph_size}, \n Std {self.std_subgraph_size}")
 
-        logging.info('=====================')
-        logging.info(
+        print('=====================')
+        print(
             f"Enclosed nodes ratio stats: \n Avg size {self.avg_enc_ratio}, \n Min size {self.min_enc_ratio}, \n Max size {self.max_enc_ratio}, \n Std {self.std_enc_ratio}")
 
-        logging.info('=====================')
-        logging.info(
+        print('=====================')
+        print(
             f"# of pruned nodes stats: \n Avg size {self.avg_num_pruned_nodes}, \n Min size {self.min_num_pruned_nodes}, \n Max size {self.max_num_pruned_nodes}, \n Std {self.std_num_pruned_nodes}")
 
         with self.main_env.begin(db=self.db_pos) as txn:
