@@ -75,9 +75,10 @@ def main():
         hop=args.hop,
         enclosing_sub_graph = True,
         max_nodes_per_hop=None,
+        experiment_name="test"
     )
 
-    # initialize_experiment(params, __file__)
+    #initialize_experiment(params, __file__)
 
     # Ensure output directory exists
     os.makedirs(os.path.dirname(params.db_path), exist_ok=True)

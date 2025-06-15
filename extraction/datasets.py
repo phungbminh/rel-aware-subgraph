@@ -13,6 +13,7 @@ from utils import ssp_multigraph_to_dgl, deserialize
 from utils import process_files
 from scipy.sparse import csr_matrix
 from .graph_sampler import *
+from tqdm import tqdm
 
 
 def generate_subgraph_datasets(params, splits=['train', 'valid', 'test'], max_label_value=None):
@@ -60,7 +61,8 @@ def generate_subgraph_datasets(params, splits=['train', 'valid', 'test'], max_la
     print(f"n_relations = {n_relations}")
     # 2. Collect positive triplets per split
     graphs = {}
-    for split in splits:
+    #for split in splits:
+    for split in tqdm(splits, desc="Subsampling positives"):
         edges = split_edge[split]
         triplets = np.stack([edges['head'], edges['tail'], edges['relation']], axis=1)
         if params.max_links is not None and triplets.shape[0] > params.max_links:
@@ -71,7 +73,8 @@ def generate_subgraph_datasets(params, splits=['train', 'valid', 'test'], max_la
     # 3. Build adjacency list from training positives
     raw_train = split_edge['train']
     adj_list = []
-    for rel in range(n_relations):
+    #for rel in range(n_relations):
+    for rel in tqdm(range(n_relations), desc="Building adj list"):
         mask = raw_train['relation'] == rel
         heads = raw_train['head'][mask]
         tails = raw_train['tail'][mask]
@@ -80,7 +83,8 @@ def generate_subgraph_datasets(params, splits=['train', 'valid', 'test'], max_la
         adj_list.append(adj)
 
     # 4. Negative sampling
-    for split_name, info in graphs.items():
+    #for split_name, info in graphs.items():
+    for split_name, info in tqdm(graphs.items(), desc="Sampling negatives", total=len(graphs)):
         logging.info(f"Sampling negative links for OGB-BioKG split '{split_name}'")
         pos_edges = info['pos']
         _, neg_edges = sample_neg(
