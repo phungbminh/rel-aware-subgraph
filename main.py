@@ -15,6 +15,9 @@ from torch.utils.data import DataLoader
 from extraction.datasets import generate_subgraph_datasets, SubgraphDataset
 from model import RASGModel
 from torch.cuda.amp import GradScaler, autocast
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+
 class Params:
     pass
 
@@ -202,28 +205,28 @@ def main():
         for pos_bg, pos_r, neg_bg, neg_r in train_loader:
             pos_bg, neg_bg = pos_bg.to(device), neg_bg.to(device)
             optimizer.zero_grad()
-            if args.use_mixed_precision:
-                with autocast():
-                    pos_scores = model(pos_bg)
-                    neg_scores = model(neg_bg)
-                    target = torch.ones_like(pos_scores, device=device)
-                    loss = loss_fn(pos_scores, neg_scores, target)
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
-            else:
-                pos_scores = model(pos_bg)
-                neg_scores = model(neg_bg)
-                target = torch.ones_like(pos_scores, device=device)
-                loss = loss_fn(pos_scores, neg_scores, target)
-                loss.backward()
-                optimizer.step()
-            # pos_scores = model(pos_bg)
-            # neg_scores = model(neg_bg)
-            # target = torch.ones_like(pos_scores, device=device)
-            # loss = loss_fn(pos_scores, neg_scores, target)
-            # loss.backward()
-            # optimizer.step()
+            # if args.use_mixed_precision:
+            #     with autocast():
+            #         pos_scores = model(pos_bg)
+            #         neg_scores = model(neg_bg)
+            #         target = torch.ones_like(pos_scores, device=device)
+            #         loss = loss_fn(pos_scores, neg_scores, target)
+            #         scaler.scale(loss).backward()
+            #         scaler.step(optimizer)
+            #         scaler.update()
+            # else:
+            #     pos_scores = model(pos_bg)
+            #     neg_scores = model(neg_bg)
+            #     target = torch.ones_like(pos_scores, device=device)
+            #     loss = loss_fn(pos_scores, neg_scores, target)
+            #     loss.backward()
+            #     optimizer.step()
+            pos_scores = model(pos_bg)
+            neg_scores = model(neg_bg)
+            target = torch.ones_like(pos_scores, device=device)
+            loss = loss_fn(pos_scores, neg_scores, target)
+            loss.backward()
+            optimizer.step()
             total_loss += loss.item() * pos_scores.size(0)
         avg_train_loss = total_loss / len(train_ds)
         print(f"Epoch {epoch}/{args.epochs} - Train Loss: {avg_train_loss:.4f}")
@@ -234,23 +237,29 @@ def main():
         with torch.no_grad():
             for pos_bg, pos_r, neg_bg, neg_r in valid_loader:
                 pos_bg, neg_bg = pos_bg.to(device), neg_bg.to(device)
-                # pos_scores = model(pos_bg)
-                # neg_scores = model(neg_bg)
-                # target = torch.ones_like(pos_scores, device=device)
-                # loss = loss_fn(pos_scores, neg_scores, target)
+                pos_scores = model(pos_bg)
+                neg_scores = model(neg_bg)
+                target = torch.ones_like(pos_scores, device=device)
+                loss = loss_fn(pos_scores, neg_scores, target)
+                val_loss += loss.item() * pos_scores.size(0)
+                # if args.use_mixed_precision:
+                #     with autocast():
+                #         pos_scores = model(pos_bg)
+                #         neg_scores = model(neg_bg)
+                #         print(pos_scores[:3], neg_scores[:3])
+                #         assert torch.isfinite(pos_scores).all()
+                #         assert torch.isfinite(neg_scores).all()
+                #         target = torch.ones_like(pos_scores, device=device)
+                #         loss = loss_fn(pos_scores, neg_scores, target)
+                # else:
+                #     pos_scores = model(pos_bg)
+                #     neg_scores = model(neg_bg)
+                #     print(pos_scores[:3], neg_scores[:3])
+                #     assert torch.isfinite(pos_scores).all()
+                #     assert torch.isfinite(neg_scores).all()
+                #     target = torch.ones_like(pos_scores, device=device)
+                #     loss = loss_fn(pos_scores, neg_scores, target)
                 # val_loss += loss.item() * pos_scores.size(0)
-                if args.use_mixed_precision:
-                    with autocast():
-                        pos_scores = model(pos_bg)
-                        neg_scores = model(neg_bg)
-                        target = torch.ones_like(pos_scores, device=device)
-                        loss = loss_fn(pos_scores, neg_scores, target)
-                else:
-                    pos_scores = model(pos_bg)
-                    neg_scores = model(neg_bg)
-                    target = torch.ones_like(pos_scores, device=device)
-                    loss = loss_fn(pos_scores, neg_scores, target)
-                    val_loss += loss.item() * pos_scores.size(0)
 
         avg_val_loss = val_loss / len(valid_ds)
         print(f"Epoch {epoch}/{args.epochs} - Val Loss: {avg_val_loss:.4f}")
