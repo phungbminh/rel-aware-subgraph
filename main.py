@@ -14,7 +14,7 @@ import dgl
 from torch.utils.data import DataLoader
 from extraction.datasets import generate_subgraph_datasets, SubgraphDataset
 from model import RASGModel
-
+from torch.cuda.amp import GradScaler, autocast
 class Params:
     pass
 
@@ -40,7 +40,7 @@ def main():
     parser.add_argument('--db-path', type=str, required=True,
                         help='LMDB path for storing subgraphs')
     # Training hyperparams
-    parser.add_argument('--batch-size', type=int, default=32)
+    parser.add_argument('--batch-size', type=int, default=4)
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--rel-emb-dim', type=int, default=16)
@@ -63,6 +63,8 @@ def main():
     # Control regeneration
     parser.add_argument('--force-generate', action='store_true',
                         help='Force regeneration of subgraphs')
+    parser.add_argument('--use-mixed-precision', action='store_true',
+                              help = 'Enable mixed-precision training with torch.cuda.amp')
     args = parser.parse_args()
 
     # 1) Generate or load subgraphs
@@ -171,21 +173,6 @@ def main():
     print("\npos_sub.edata keys:", list(pos_sub.edata.keys()))
     print("  type   shape     :", tuple(pos_sub.edata['type'].shape))
 
-    # Nếu bạn muốn batch thử:
-    from torch.utils.data import DataLoader
-    def debug_collate(samples):
-        p,_,_,ns,_,_ = zip(*samples)
-        bg = dgl.batch(p)
-        return bg
-
-    dl = DataLoader(train_ds, batch_size=4, collate_fn=debug_collate)
-    bg = next(iter(dl))
-    print("\nBatched graph:")
-    print("  bg.ndata keys    :", list(bg.ndata.keys()))
-    print("  bg.ndata['feat'] :", bg.ndata['feat'].shape)
-    print("  bg.ndata['query_rel']:", bg.ndata['query_rel'].shape)
-    print("  bg.edata['type'] :", bg.edata['type'].shape)
-
     train_loader = DataLoader(train_ds, batch_size=args.batch_size,
                               shuffle=True, collate_fn=collate_fn)
     valid_loader = DataLoader(valid_ds, batch_size=args.batch_size,
@@ -206,6 +193,8 @@ def main():
     loss_fn = nn.MarginRankingLoss(margin=1.0)
 
     # 4) Training & validation loop
+    scaler = GradScaler() if args.use_mixed_precision else None
+
     for epoch in range(1, args.epochs + 1):
         # Training
         model.train()
@@ -213,12 +202,28 @@ def main():
         for pos_bg, pos_r, neg_bg, neg_r in train_loader:
             pos_bg, neg_bg = pos_bg.to(device), neg_bg.to(device)
             optimizer.zero_grad()
-            pos_scores = model(pos_bg)
-            neg_scores = model(neg_bg)
-            target = torch.ones_like(pos_scores, device=device)
-            loss = loss_fn(pos_scores, neg_scores, target)
-            loss.backward()
-            optimizer.step()
+            if args.use_mixed_precision:
+                with autocast():
+                    pos_scores = model(pos_bg)
+                    neg_scores = model(neg_bg)
+                    target = torch.ones_like(pos_scores, device=device)
+                    loss = loss_fn(pos_scores, neg_scores, target)
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+            else:
+                pos_scores = model(pos_bg)
+                neg_scores = model(neg_bg)
+                target = torch.ones_like(pos_scores, device=device)
+                loss = loss_fn(pos_scores, neg_scores, target)
+                loss.backward()
+                optimizer.step()
+            # pos_scores = model(pos_bg)
+            # neg_scores = model(neg_bg)
+            # target = torch.ones_like(pos_scores, device=device)
+            # loss = loss_fn(pos_scores, neg_scores, target)
+            # loss.backward()
+            # optimizer.step()
             total_loss += loss.item() * pos_scores.size(0)
         avg_train_loss = total_loss / len(train_ds)
         print(f"Epoch {epoch}/{args.epochs} - Train Loss: {avg_train_loss:.4f}")
@@ -229,11 +234,24 @@ def main():
         with torch.no_grad():
             for pos_bg, pos_r, neg_bg, neg_r in valid_loader:
                 pos_bg, neg_bg = pos_bg.to(device), neg_bg.to(device)
-                pos_scores = model(pos_bg)
-                neg_scores = model(neg_bg)
-                target = torch.ones_like(pos_scores, device=device)
-                loss = loss_fn(pos_scores, neg_scores, target)
-                val_loss += loss.item() * pos_scores.size(0)
+                # pos_scores = model(pos_bg)
+                # neg_scores = model(neg_bg)
+                # target = torch.ones_like(pos_scores, device=device)
+                # loss = loss_fn(pos_scores, neg_scores, target)
+                # val_loss += loss.item() * pos_scores.size(0)
+                if args.use_mixed_precision:
+                    with autocast():
+                        pos_scores = model(pos_bg)
+                        neg_scores = model(neg_bg)
+                        target = torch.ones_like(pos_scores, device=device)
+                        loss = loss_fn(pos_scores, neg_scores, target)
+                else:
+                    pos_scores = model(pos_bg)
+                    neg_scores = model(neg_bg)
+                    target = torch.ones_like(pos_scores, device=device)
+                    loss = loss_fn(pos_scores, neg_scores, target)
+                    val_loss += loss.item() * pos_scores.size(0)
+
         avg_val_loss = val_loss / len(valid_ds)
         print(f"Epoch {epoch}/{args.epochs} - Val Loss: {avg_val_loss:.4f}")
 

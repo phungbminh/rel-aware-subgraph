@@ -80,7 +80,8 @@ def links2subgraphs(A, graphs, params, max_label_value=None):
 
         with env.begin(write=True, db=split_env) as txn:
             txn.put('num_graphs'.encode(), (len(links)).to_bytes(int.bit_length(len(links)), byteorder='little'))
-
+        n = mp.cpu_count()
+        print("Cores:", n)
         with mp.Pool(processes=None, initializer=intialize_worker, initargs=(A, params, max_label_value)) as p:
             args_ = zip(range(len(links)), links, g_labels)
             for (str_id, datum) in tqdm(p.imap(extract_save_subgraph, args_), total=len(links)):
