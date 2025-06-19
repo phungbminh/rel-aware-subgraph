@@ -14,7 +14,7 @@ from utils import process_files
 from scipy.sparse import csr_matrix
 from .graph_sampler import *
 from tqdm import tqdm
-
+import numpy as np
 
 def generate_subgraph_datasets(params, splits=['train', 'valid', 'test'], max_label_value=None):
     """
