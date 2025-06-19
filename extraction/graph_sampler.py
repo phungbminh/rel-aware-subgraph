@@ -1,8 +1,11 @@
+#!/usr/bin/env python3
+import os
 import struct
 import logging
 from tqdm import tqdm
 import lmdb
 import multiprocessing as mp
+
 import numpy as np
 import scipy.sparse as ssp
 from scipy.special import softmax
@@ -14,26 +17,26 @@ from utils.graph_utils import incidence_matrix, remove_nodes, serialize, get_edg
 logger = logging.getLogger(__name__)
 
 
-def sample_negatives(adj_list, edges,
-                      num_negatives_per_link=1,
-                      max_samples=1_000_000,
-                      constrained_prob=0.0):
+def sample_neg(adj_list, edges,
+               num_neg_per_link=1,
+               max_samples=1_000_000,
+               constrained_prob=0.0):
     """
     Generate negative edge samples for each positive link.
 
     Args:
         adj_list: list of scipy.sparse adjacency matrices, one per relation.
         edges: array of shape (num_pos, 3) with (head, tail, rel).
-        num_negatives_per_link: number of negative samples per positive link.
+        num_neg_per_link: number of negative samples per positive link.
         max_samples: if >0 and less than num_pos, randomly subsample positives.
         constrained_prob: probability to sample from same-head/tail distribution.
 
     Returns:
         pos_edges: (M,3) array of positive edges used.
-        neg_edges: (M*num_negatives_per_link,3) array of negative samples.
+        neg_edges: (M*num_neg_per_link,3) array of negative samples.
     """
     pos_edges = edges.copy()
-    if max_samples < len(pos_edges):
+    if max_samples and max_samples < len(pos_edges):
         perm = np.random.permutation(len(pos_edges))[:max_samples]
         pos_edges = pos_edges[perm]
 
@@ -49,7 +52,7 @@ def sample_negatives(adj_list, edges,
 
     neg_edges = []
     pbar = tqdm(total=len(pos_edges), desc="Sampling negatives")
-    while len(neg_edges) < num_negatives_per_link * len(pos_edges):
+    while len(neg_edges) < num_neg_per_link * len(pos_edges):
         i = pbar.n % len(pos_edges)
         h, t, r = pos_edges[i]
         if np.random.rand() < constrained_prob:
@@ -71,19 +74,17 @@ def sample_negatives(adj_list, edges,
     return pos_edges, np.array(neg_edges, dtype=int)
 
 
-def estimate_average_subgraph_size(sample_size, links, adj_list, params):
+def estimate_avg_size(sample_size, links, adj_list, params):
     """
     Estimate the average serialized size (in bytes) of a subgraph.
     """
     total = 0
     for n1, n2, r in links[np.random.choice(len(links), sample_size)]:
-        nodes, labels, size, enc_ratio, pruned = extract_and_label_subgraph(
-            (n1, n2), r,
-            adj_list,
-            params.hop,
-            params.enclosing_sub_graph,
-            params.max_nodes_per_hop
-        )
+        nodes, labels, size, enc_ratio, pruned = extract_and_label((n1, n2), r,
+                                                                     adj_list,
+                                                                     params.hop,
+                                                                     params.enclosing_sub_graph,
+                                                                     params.max_nodes_per_hop)
         datum = {'nodes': nodes,
                  'r_label': r,
                  'g_label': 0,
@@ -95,29 +96,27 @@ def estimate_average_subgraph_size(sample_size, links, adj_list, params):
     return total / sample_size
 
 
-def _initialize_worker(adj_list, params, max_label_value):
-    global _A, _params, _max_label_value
+def _init_worker(adj_list, params, max_label_val):
+    global _A, _params, _max_label_val
     _A = adj_list
     _params = params
-    _max_label_value = max_label_value
+    _max_label_val = max_label_val
 
 
-def _extract_and_serialize_subgraph(args):
-    idx, ((n1, n2, r), g_label) = args
-    nodes, labels, size, enc_ratio, pruned = extract_and_label_subgraph(
-        (int(n1), int(n2)), int(r),
-        _A,
-        _params.hop,
-        _params.enclosing_sub_graph,
-        _params.max_nodes_per_hop,
-        _max_label_value
-    )
-    if _max_label_value is not None:
-        labels = np.minimum(labels, _max_label_value)
+def _extract_serialize(args):
+    idx, ((n1, n2, r), g_lbl) = args
+    nodes, labels, size, enc_ratio, pruned = extract_and_label((int(n1), int(n2)), int(r),
+                                                                _A,
+                                                                _params.hop,
+                                                                _params.enclosing_sub_graph,
+                                                                _params.max_nodes_per_hop,
+                                                                _max_label_val)
+    if _max_label_val is not None:
+        labels = np.minimum(labels, _max_label_val)
     datum = {
         'nodes': nodes,
         'r_label': r,
-        'g_label': g_label,
+        'g_label': g_lbl,
         'n_labels': labels,
         'subgraph_size': size,
         'enc_ratio': enc_ratio,
@@ -127,162 +126,113 @@ def _extract_and_serialize_subgraph(args):
     return sid, datum
 
 
-def extract_and_store_subgraphs(adj_list, graph_splits, params, max_label_value=None, use_cache=True):
+def links2subgraphs(adj_list, graph_splits, params, max_label_val=None, use_cache=True):
     """
-    Extract and cache h-hop enclosing subgraphs into LMDB.
+    Extract & cache h-hop subgraphs into LMDB under splits 'train','valid','test'.
 
     Args:
-        adj_list: list of scipy.sparse adjacency per relation.
-        graph_splits: dict { 'train','valid','test' }
-                      each a dict {'pos': array, 'neg': array or None}.
-        params: with attributes db_path, hop, enclosing_sub_graph,
-                max_nodes_per_hop, num_neg_samples_per_link,
-                constrained_neg_prob.
-        max_label_value: cap on node labels.
-        use_cache: if True, skip extraction when DB exists.
+      adj_list: list of scipy.sparse adjacency per relation.
+      graph_splits: dict of splits with 'pos' and 'neg'.
+      params: attributes db_path, hop, enclosing_sub_graph,
+              max_nodes_per_hop, num_neg_per_link, constrained_prob.
+      max_label_val: cap for node labels.
+      use_cache: skip if LMDB exists.
     """
-    # 1) Cache check
+    # cache check
     if use_cache and os.path.isdir(params.db_path):
         try:
             env = lmdb.open(params.db_path, readonly=True, lock=False, max_dbs=6)
             db = env.open_db(b'train_pos')
             with env.begin(db=db) as txn:
-                count = int.from_bytes(txn.get(b'num_graphs'), byteorder='little')
-            logger.info(f"[CACHE] Found {count} train_pos subgraphs; skipping.")
+                cnt = int.from_bytes(txn.get(b'num_graphs'), byteorder='little')
+            logger.info(f"[CACHE] {cnt} train_pos found, skip.")
             return
-        except Exception:
-            logger.info("[CACHE] No valid LMDB; regenerating...")
+        except:
+            logger.info("[CACHE] invalid LMDB, rebuilding...")
 
-    # 2) Prepare LMDB
-    if os.path.isdir(params.db_path):
-        os.system(f"rm -rf {params.db_path}")
+    # prepare LMDB
+    if os.path.isdir(params.db_path): os.system(f"rm -rf {params.db_path}")
     os.makedirs(params.db_path, exist_ok=True)
-    size_est = estimate_average_subgraph_size(
-        min(100, len(graph_splits['train']['pos'])),
-        graph_splits['train']['pos'],
-        adj_list,
-        params
-    ) * 1.5
-    total_links = sum(len(graph_splits[s]['pos']) + (len(graph_splits[s]['neg']) if graph_splits[s]['neg'] is not None else 0)
+    size_est = estimate_avg_size(min(100, len(graph_splits['train']['pos'])),
+                                  graph_splits['train']['pos'],
+                                  adj_list, params) * 1.5
+    total_links = sum(len(graph_splits[s]['pos']) + len(graph_splits[s].get('neg', []))
                       for s in graph_splits)
     env = lmdb.open(params.db_path,
                     map_size=int(total_links * size_est),
                     max_dbs=6)
 
-    # 3) Negative sampling
-    pos, neg = sample_negatives(
-        adj_list,
-        graph_splits['train']['pos'],
-        params.num_neg_samples_per_link,
-        max_samples=None,
-        constrained_prob=params.constrained_neg_prob
-    )
+    # negative sampling
+    pos, neg = sample_neg(adj_list,
+                          graph_splits['train']['pos'],
+                          params.num_neg_per_link,
+                          max_samples=None,
+                          constrained_prob=params.constrained_prob)
     graph_splits['train']['pos'], graph_splits['train']['neg'] = pos, neg
 
-    # 4) Extract & store helper
-    def _store_split(name, links, labels):
+    # store helper
+    def _store(name, links, labels):
         db = env.open_db(name.encode())
         with env.begin(write=True, db=db) as txn:
             txn.put(b'num_graphs', len(links).to_bytes(len(links).bit_length(), 'little'))
         args = zip(range(len(links)), zip(links, labels))
-        with mp.Pool(initializer=_initialize_worker,
-                     initargs=(adj_list, params, max_label_value)) as pool:
-            for sid, datum in tqdm(pool.imap(_extract_and_serialize_subgraph, args),
+        with mp.Pool(initializer=_init_worker,
+                     initargs=(adj_list, params, max_label_val)) as pool:
+            for sid, datum in tqdm(pool.imap(_extract_serialize, args),
                                    total=len(links), desc=name):
                 with env.begin(write=True, db=db) as txn:
                     txn.put(sid, serialize(datum))
 
-    # 5) Run per split
-    for split in ['train', 'valid', 'test']:
-        _store_split(f"{split}_pos",
-                     graph_splits[split]['pos'],
-                     np.ones(len(graph_splits[split]['pos']), dtype=np.int8))
-        _store_split(f"{split}_neg",
-                     graph_splits[split]['neg'],
-                     np.zeros(len(graph_splits[split]['neg']), dtype=np.int8))
+    for split in ['train','valid','test']:
+        _store(f"{split}_pos", graph_splits[split]['pos'],
+               np.ones(len(graph_splits[split]['pos']), dtype=np.int8))
+        _store(f"{split}_neg", graph_splits[split]['neg'],
+               np.zeros(len(graph_splits[split]['neg']), dtype=np.int8))
 
-    logger.info(f"✅ Subgraph LMDB written to: {params.db_path}")
+    logger.info(f"✅ LMDB at {params.db_path}" )
 
 
-def get_hop_neighbors(roots, adj_incidence, h=1, max_per_hop=None):
-    """
-    Return set of nodes within h hops from roots in the incidence matrix.
-    """
-    bfs = _bfs_relational(adj_incidence, roots, max_per_hop)
+def get_hop_neighbors(roots, inc_mat, h=1, max_p=None):
+    bfs = _bfs_relational(inc_mat, roots, max_p)
     levels = []
     for _ in range(h):
-        try:
-            levels.append(next(bfs))
-        except StopIteration:
-            break
+        try: levels.append(next(bfs))
+        except StopIteration: break
     return set().union(*levels)
 
 
-def extract_and_label_subgraph(ind, rel, adj_list,
-                                h=1, enclosing=True,
-                                max_per_hop=None,
-                                max_node_label=None):
-    """
-    Extract h-hop (enclosing or union) subgraph and label nodes.
-
-    Returns:
-      nodes: list of node IDs in the pruned subgraph.
-      labels: np.ndarray of shape (num_nodes,2) per Double-Radius scheme.
-      subgraph_size: int
-      enc_ratio: float
-      num_pruned: int
-    """
-    # build incidence
+def extract_and_label(ind, rel, adj_list,
+                      h=1, enclosing=True,
+                      max_p=None,
+                      max_label=None):
     inc = incidence_matrix(adj_list)
     inc += inc.T
-
-    neigh1 = get_hop_neighbors({ind[0]}, inc, h, max_per_hop)
-    neigh2 = get_hop_neighbors({ind[1]}, inc, h, max_per_hop)
-
-    if enclosing:
-        core = neigh1 & neigh2
-    else:
-        core = neigh1 | neigh2
-
-    # include roots first
-    all_nodes = [ind[0], ind[1]] + list(core - {ind[0], ind[1]})
-    sub_adjs = [adj[all_nodes, :][:, all_nodes] for adj in adj_list]
+    n1, n2 = ind
+    nei1 = get_hop_neighbors({n1}, inc, h, max_p)
+    nei2 = get_hop_neighbors({n2}, inc, h, max_p)
+    core = (nei1 & nei2) if enclosing else (nei1 | nei2)
+    all_nodes = [n1, n2] + list(core - {n1,n2})
+    sub_adjs = [adj[all_nodes,:][:,all_nodes] for adj in adj_list]
     lab, keep = node_label(incidence_matrix(sub_adjs), max_distance=h)
-
-    pruned_nodes = np.array(all_nodes)[keep].tolist()
-    pruned_labels = lab[keep]
-    if max_node_label is not None:
-        pruned_labels = np.minimum(pruned_labels, max_node_label)
-
-    size = len(pruned_nodes)
-    enc_ratio = len(neigh1 & neigh2) / (len(neigh1 | neigh2) + 1e-6)
-    num_pruned = len(all_nodes) - size
-    return pruned_nodes, pruned_labels, size, enc_ratio, num_pruned
+    pr_nodes = np.array(all_nodes)[keep].tolist()
+    pr_labels = lab[keep]
+    if max_label is not None: pr_labels = np.minimum(pr_labels, max_label)
+    size = len(pr_nodes)
+    enc = len(nei1 & nei2) / (len(nei1 | nei2) + 1e-6)
+    pruned = len(all_nodes) - size
+    return pr_nodes, pr_labels, size, enc, pruned
 
 
 def node_label(incidence, max_distance=1):
-    """
-    Double-Radius Node Labeling Scheme.
-
-    Returns labels array and indices of nodes within max_distance.
-    """
-    roots = [0,1]
-    sgs = [remove_nodes(incidence, [r]) for r in roots]
-    dists = []
-    for sg in sgs:
-        d = ssp.csgraph.dijkstra(sg, indices=[0], directed=False,
-                                 unweighted=True, limit=1e7)
-        dists.append(np.clip(d[:,1:], 0, int(1e7)))
-    dist_pairs = np.stack((dists[0][0], dists[1][0]), axis=1).astype(int)
-
-    base = np.array([[0,1],[1,0]])
-    if dist_pairs.shape[0]>0:
-        lab = np.vstack((base, dist_pairs))
-    else:
-        lab = base
-
-    keep_idx = np.where(lab.max(axis=1) <= max_distance)[0]
+    roots=[0,1]
+    sgs=[remove_nodes(incidence,[r]) for r in roots]
+    dists=[np.clip(ssp.csgraph.dijkstra(sg,indices=[0],directed=False,unweighted=True,limit=1e7)[:,1:],0,1e7) for sg in sgs]
+    dp=np.stack((dists[0][0],dists[1][0]),axis=1).astype(int)
+    base=np.array([[0,1],[1,0]])
+    lab=np.vstack((base,dp)) if dp.size else base
+    keep_idx=np.where(lab.max(axis=1)<=max_distance)[0]
     return lab, keep_idx
+
 
 
 # import struct
