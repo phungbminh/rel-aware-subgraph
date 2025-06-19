@@ -14,10 +14,12 @@ import dask_cudf
 from utils.graph_utils import serialize, get_edge_count
 
 # Khởi Dask-cuGraph cho 2 GPU
-cluster = LocalCUDACluster(n_workers=2)
-client  = Client(cluster)
+cluster = LocalCUDACluster(n_workers=2, dashboard_address=None, scheduler_port=0 )
+client = Client(cluster)
 
 # Chuyển mỗi adjacency list sang Graph trên GPU
+
+
 def build_gpu_graphs(adj_list):
     gpu_graphs = []
     for A in adj_list:
@@ -29,11 +31,15 @@ def build_gpu_graphs(adj_list):
         gpu_graphs.append(G)
     return gpu_graphs
 
+
 # Khởi GPU graphs toàn cục
 gpu_graphs = None
+
+
 def init_gpu_graphs(adj_list):
     global gpu_graphs
     gpu_graphs = build_gpu_graphs(adj_list)
+
 
 # GPU-negative sampling
 def sample_neg(adj_list, edges, num_neg_samples_per_link=1, max_size=1_000_000, constrained_neg_prob=0.0):
@@ -62,7 +68,7 @@ def sample_neg(adj_list, edges, num_neg_samples_per_link=1, max_size=1_000_000, 
     n = adj_list[0].shape[0]
 
     while len(neg) < M * num_neg_samples_per_link:
-        h, t, r = int(edges_gpu[i,0]), int(edges_gpu[i,1]), int(edges_gpu[i,2])
+        h, t, r = int(edges_gpu[i, 0]), int(edges_gpu[i, 1]), int(edges_gpu[i, 2])
         if cp.random.rand() < constrained_neg_prob:
             if cp.random.rand() < 0.5:
                 h = int(cp.random.choice(valid_heads[r]))
@@ -83,6 +89,7 @@ def sample_neg(adj_list, edges, num_neg_samples_per_link=1, max_size=1_000_000, 
     pbar.close()
     neg = cp.asnumpy(cp.array(neg, dtype=cp.int32))
     return cp.asnumpy(edges_gpu), neg
+
 
 # Hàm extract + label subgraph sử dụng cuGraph ego_graph
 def extract_partition(df_part, hop, enclosing, max_label_value):
@@ -117,6 +124,7 @@ def extract_partition(df_part, hop, enclosing, max_label_value):
         results.append({'id': str_id, 'datum': serialize(datum)})
     return cudf.DataFrame(results)
 
+
 # Giữ nguyên cấu trúc cũ, chỉ dispatch qua Dask
 def links2subgraphs(adj_list, graphs, params, max_label_value=None):
     # init GPU graphs
@@ -125,11 +133,11 @@ def links2subgraphs(adj_list, graphs, params, max_label_value=None):
     # build DataFrame links
     all_rows = []
     for split_name, split in graphs.items():
-        for sign in ['pos','neg']:
-            g_label = 1 if sign=='pos' else 0
-            for (h,t,r) in split[sign]:
-                all_rows.append((h,t,r,split_name))
-    df = cudf.DataFrame(all_rows, columns=['h','t','r','split'])
+        for sign in ['pos', 'neg']:
+            g_label = 1 if sign == 'pos' else 0
+            for (h, t, r) in split[sign]:
+                all_rows.append((h, t, r, split_name))
+    df = cudf.DataFrame(all_rows, columns=['h', 't', 'r', 'split'])
     ddf = dask_cudf.from_cudf(df, npartitions=2)
 
     # submit extract_partition lên Dask

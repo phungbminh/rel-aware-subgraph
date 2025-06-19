@@ -13,3 +13,4 @@ cupy-cuda12x
 dask
 dask-cuda
 dask-cudf-cu12
+git+https://github.com/rapidsai/dask-cugraph.git
