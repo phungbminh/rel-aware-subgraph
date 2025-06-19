@@ -10,6 +10,10 @@ class Trainer:
                  optimizer_name='Adam', device='cuda',
                  collate_fn=None, exp_dir='.', save_every=5):
 
+        if torch.cuda.device_count() > 1:
+            print(f"=> sử dụng {torch.cuda.device_count()} GPUs")
+            model = nn.DataParallel(model)
+
         self.model = model.to(device)
         self.train_dataset = train_dataset
         self.valid_dataset = valid_dataset
