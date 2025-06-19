@@ -16,11 +16,12 @@ from extraction.datasets import generate_subgraph_datasets, SubgraphDataset
 from model import RASGModel
 from torch.cuda.amp import GradScaler, autocast
 import warnings
+
 warnings.filterwarnings("ignore", category=UserWarning)
+
 
 class Params:
     pass
-
 
 def collate_fn(samples):
     # Unpack samples from SubgraphDataset
@@ -34,6 +35,7 @@ def collate_fn(samples):
     pos_r = torch.tensor(pos_r_labels, dtype=torch.long)
     neg_r = torch.tensor([r for neg in neg_r_labels_list for r in neg], dtype=torch.long)
     return pos_bg, pos_r, neg_bg, neg_r
+
 
 def main():
     parser = argparse.ArgumentParser(description="Train GraIL++ on OGB-BioKG")
@@ -67,7 +69,12 @@ def main():
     parser.add_argument('--force-generate', action='store_true',
                         help='Force regeneration of subgraphs')
     parser.add_argument('--use-mixed-precision', action='store_true',
-                              help = 'Enable mixed-precision training with torch.cuda.amp')
+                        help='Enable mixed-precision training with torch.cuda.amp')
+
+    parser.add_argument('--cache-dir', type=str, default='./cache',
+                        help='Directory to load/save cached DGL graphs')
+    parser.add_argument('--use-cache', action='store_true',
+                        help='If set, sẽ load cache thay vì rebuild subgraphs')
     args = parser.parse_args()
 
     # 1) Generate or load subgraphs
@@ -78,12 +85,12 @@ def main():
         num_neg_samples_per_link=args.num_neg,
         constrained_neg_prob=args.constrained_neg_prob,
         hop=args.hop,
-        enclosing_sub_graph = True,
+        enclosing_sub_graph=True,
         max_nodes_per_hop=None,
         experiment_name="test"
     )
 
-    #initialize_experiment(params, __file__)
+    # initialize_experiment(params, __file__)
 
     # Ensure output directory exists
     os.makedirs(os.path.dirname(params.db_path), exist_ok=True)
@@ -134,6 +141,7 @@ def main():
         'mapping': './data/ogbl_biokg/mapping',
         'relations': './data/ogbl_biokg/raw/relations',
     }
+
     train_ds = SubgraphDataset(
         params.db_path,
         'train_pos', 'train_neg',
@@ -196,7 +204,7 @@ def main():
     loss_fn = nn.MarginRankingLoss(margin=1.0)
 
     # 4) Training & validation loop
-    scaler = GradScaler() if args.use_mixed_precision else None
+    scaler = torch.amp.GradScaler(device='cuda') if args.use_mixed_precision else None
 
     for epoch in range(1, args.epochs + 1):
         # Training
@@ -206,7 +214,8 @@ def main():
             pos_bg, neg_bg = pos_bg.to(device), neg_bg.to(device)
             optimizer.zero_grad()
             if args.use_mixed_precision:
-                with autocast():
+                #with autocast():
+                with torch.amp.autocast('cuda'):
                     pos_scores = model(pos_bg)
                     neg_scores = model(neg_bg)
                     target = torch.ones_like(pos_scores, device=device)
@@ -243,7 +252,7 @@ def main():
                 # loss = loss_fn(pos_scores, neg_scores, target)
                 # val_loss += loss.item() * pos_scores.size(0)
                 if args.use_mixed_precision:
-                    with autocast():
+                    with torch.amp.autocast('cuda'):
                         pos_scores = model(pos_bg)
                         neg_scores = model(neg_bg)
                         print(pos_scores[:3], neg_scores[:3])
@@ -263,6 +272,7 @@ def main():
 
         avg_val_loss = val_loss / len(valid_ds)
         print(f"Epoch {epoch}/{args.epochs} - Val Loss: {avg_val_loss:.4f}")
+
 
 if __name__ == "__main__":
     main()
