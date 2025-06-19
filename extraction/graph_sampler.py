@@ -72,9 +72,9 @@ def sample_neg(adj_list, edges, num_neg_samples_per_link=1, max_size=1_000_000, 
         h, t, r = int(edges_gpu[i, 0]), int(edges_gpu[i, 1]), int(edges_gpu[i, 2])
         if cp.random.rand() < constrained_neg_prob:
             if cp.random.rand() < 0.5:
-                h = int(cp.random.choice(valid_heads[r]))
+                h = int(cp.random.choice(valid_heads[r], size=1)[0])
             else:
-                t = int(cp.random.choice(valid_tails[r]))
+                t = int(cp.random.choice(valid_heads[r], size=1)[0])
         else:
             if cp.random.rand() < 0.5:
                 h = int(cp.random.randint(0, n))
