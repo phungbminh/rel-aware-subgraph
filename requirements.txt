@@ -7,14 +7,9 @@ networkx
 dgl
 matplotlib
 git+https://github.com/phungbminh/ogb.git@master#egg=ogb
-# CUDA array library
-cupy-cuda11x
-# RAPIDS GPU libs
-cudf-cu11
-cugraph-cuda11x
-dask-cudf
-dask-cugraph
-dask-cuda
-# Dask scheduler
+cudf-cu12
+cugraph-cu12
+cupy-cuda12x
 dask
-distributed
+dask-cuda
+dask-cudf
