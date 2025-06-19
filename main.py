@@ -16,6 +16,7 @@ from extraction.datasets import generate_subgraph_datasets, SubgraphDataset
 from model import RASGModel
 from torch.cuda.amp import GradScaler, autocast
 import warnings
+from trainer import Trainer
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -23,19 +24,15 @@ warnings.filterwarnings("ignore", category=UserWarning)
 class Params:
     pass
 
-def collate_fn(samples):
-    # Unpack samples from SubgraphDataset
-    pos_g_list, pos_g_labels, pos_r_labels, neg_g_list_list, neg_g_labels_list, neg_r_labels_list = zip(*samples)
-    # Batch positive graphs
-    pos_bg = dgl.batch(pos_g_list)
-    # Flatten and batch negative graphs
-    neg_graphs = [g for neg_list in neg_g_list_list for g in neg_list]
-    neg_bg = dgl.batch(neg_graphs)
-    # Collect relation labels (if needed)
-    pos_r = torch.tensor(pos_r_labels, dtype=torch.long)
-    neg_r = torch.tensor([r for neg in neg_r_labels_list for r in neg], dtype=torch.long)
-    return pos_bg, pos_r, neg_bg, neg_r
 
+def collate_fn(batch):
+    # batch: list of tuples như trên
+    pos_graphs = [item[0] for item in batch]
+    pos_labels = torch.tensor([item[1] for item in batch])  # g_label_pos
+    # Lấy negative đầu tiên trong mỗi sample (có thể random.choice để đa dạng)
+    neg_graphs = [item[3][0] for item in batch]  # subgraphs_neg[0]
+    neg_labels = torch.tensor([item[4][0] for item in batch])  # g_labels_neg[0]
+    return dgl.batch(pos_graphs), pos_labels, dgl.batch(neg_graphs), neg_labels
 
 def main():
     parser = argparse.ArgumentParser(description="Train GraIL++ on OGB-BioKG")
@@ -169,25 +166,20 @@ def main():
     print(f"  aug_num_rels  = {train_ds.aug_num_rels!r}")
     print(f"  num_neg/link  = {train_ds.num_neg_samples_per_link!r}")
     print(f"  num_graphs    = {len(train_ds)!r}")
-
-    # Lấy sample đầu tiên
-    pos_sub, g_label_pos, r_label_pos, neg_subs, g_labels_neg, r_labels_neg = train_ds[0]
-
-    print("\nSample[0] returned:")
-    print(f"  pos_sub type      : {type(pos_sub)}")
-    print(f"  neg_subs len      : {len(neg_subs)}")
-
-    # Các field trong pos_sub
-    print("\npos_sub.ndata keys:", list(pos_sub.ndata.keys()))
-    print("  feat   shape     :", tuple(pos_sub.ndata['feat'].shape))
-    print("  query_rel shape  :", tuple(pos_sub.ndata['query_rel'].shape))
-    print("\npos_sub.edata keys:", list(pos_sub.edata.keys()))
-    print("  type   shape     :", tuple(pos_sub.edata['type'].shape))
-
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size,
-                              shuffle=True, collate_fn=collate_fn)
-    valid_loader = DataLoader(valid_ds, batch_size=args.batch_size,
-                              shuffle=False, collate_fn=collate_fn)
+    #
+    # # Lấy sample đầu tiên
+    # pos_sub, g_label_pos, r_label_pos, neg_subs, g_labels_neg, r_labels_neg = train_ds[0]
+    #
+    # print("\nSample[0] returned:")
+    # print(f"  pos_sub type      : {type(pos_sub)}")
+    # print(f"  neg_subs len      : {len(neg_subs)}")
+    #
+    # # Các field trong pos_sub
+    # print("\npos_sub.ndata keys:", list(pos_sub.ndata.keys()))
+    # print("  feat   shape     :", tuple(pos_sub.ndata['feat'].shape))
+    # print("  query_rel shape  :", tuple(pos_sub.ndata['query_rel'].shape))
+    # print("\npos_sub.edata keys:", list(pos_sub.edata.keys()))
+    # print("  type   shape     :", tuple(pos_sub.edata['type'].shape))
 
     # 3) Initialize model, optimizer, loss
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -200,80 +192,22 @@ def main():
         num_bases=args.num_bases,
         num_layers=args.num_layers
     ).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    loss_fn = nn.MarginRankingLoss(margin=1.0)
+    trainer = Trainer(
+        model=model,
+        train_dataset=train_ds,
+        valid_dataset=valid_ds,
+        batch_size=8,
+        lr=0.001,
+        margin=1.0,
+        optimizer_name='Adam',
+        device=device,  # hoặc 'cpu'
+        collate_fn=collate_fn,  # collate của bạn
+        exp_dir='./exp_grail',
+        save_every=5
+    )
 
-    # 4) Training & validation loop
-    scaler = torch.amp.GradScaler(device='cuda') if args.use_mixed_precision else None
-
-    for epoch in range(1, args.epochs + 1):
-        # Training
-        model.train()
-        total_loss = 0.0
-        for pos_bg, pos_r, neg_bg, neg_r in train_loader:
-            pos_bg, neg_bg = pos_bg.to(device), neg_bg.to(device)
-            optimizer.zero_grad()
-            if args.use_mixed_precision:
-                #with autocast():
-                with torch.amp.autocast('cuda'):
-                    pos_scores = model(pos_bg)
-                    neg_scores = model(neg_bg)
-                    print(f"pos_scores{pos_scores[:3]} neg_scores{neg_scores[:3]}")
-                    target = torch.ones_like(pos_scores, device=device)
-                    loss = loss_fn(pos_scores, neg_scores, target)
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
-            else:
-                pos_scores = model(pos_bg)
-                neg_scores = model(neg_bg)
-                print(f"pos_scores{pos_scores[:3]} neg_scores{neg_scores[:3]}")
-                target = torch.ones_like(pos_scores, device=device)
-                loss = loss_fn(pos_scores, neg_scores, target)
-                loss.backward()
-                optimizer.step()
-            # pos_scores = model(pos_bg)
-            # neg_scores = model(neg_bg)
-            # target = torch.ones_like(pos_scores, device=device)
-            # loss = loss_fn(pos_scores, neg_scores, target)
-            # loss.backward()
-            # optimizer.step()
-            total_loss += loss.item() * pos_scores.size(0)
-        avg_train_loss = total_loss / len(train_ds)
-        print(f"Epoch {epoch}/{args.epochs} - Train Loss: {avg_train_loss:.4f}")
-
-        # Validation
-        model.eval()
-        val_loss = 0.0
-        with torch.no_grad():
-            for pos_bg, pos_r, neg_bg, neg_r in valid_loader:
-                pos_bg, neg_bg = pos_bg.to(device), neg_bg.to(device)
-                # pos_scores = model(pos_bg)
-                # neg_scores = model(neg_bg)
-                # target = torch.ones_like(pos_scores, device=device)
-                # loss = loss_fn(pos_scores, neg_scores, target)
-                # val_loss += loss.item() * pos_scores.size(0)
-                if args.use_mixed_precision:
-                    with torch.amp.autocast('cuda'):
-                        pos_scores = model(pos_bg)
-                        neg_scores = model(neg_bg)
-                        print(f"pos_scores{pos_scores[:3]} neg_scores{neg_scores[:3]}")
-                        assert torch.isfinite(pos_scores).all()
-                        assert torch.isfinite(neg_scores).all()
-                        target = torch.ones_like(pos_scores, device=device)
-                        loss = loss_fn(pos_scores, neg_scores, target)
-                else:
-                    pos_scores = model(pos_bg)
-                    neg_scores = model(neg_bg)
-                    print(f"pos_scores{pos_scores[:3]} neg_scores{neg_scores[:3]}")
-                    assert torch.isfinite(pos_scores).all()
-                    assert torch.isfinite(neg_scores).all()
-                    target = torch.ones_like(pos_scores, device=device)
-                    loss = loss_fn(pos_scores, neg_scores, target)
-                val_loss += loss.item() * pos_scores.size(0)
-
-        avg_val_loss = val_loss / len(valid_ds)
-        print(f"Epoch {epoch}/{args.epochs} - Val Loss: {avg_val_loss:.4f}")
+    # --- 4. Train ---
+    trainer.train(num_epochs=20)
 
 if __name__ == "__main__":
     main()
