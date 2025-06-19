@@ -11,5 +11,5 @@ cudf-cu12
 cugraph-cu12
 cupy-cuda12x
 dask
-dask-cuda
-dask-cudf
+dask-cuda-cu12
+dask-cudf-cu12
