@@ -15,8 +15,8 @@ import dask_cudf
 from utils.graph_utils import serialize, get_edge_count
 config.set({'distributed.dashboard.enabled': False})
 # Khởi Dask-cuGraph cho 2 GPU
-cluster = LocalCUDACluster(n_workers=2, dashboard_address=None, scheduler_port=0 )
-client = Client(cluster)
+# cluster = LocalCUDACluster(n_workers=2, dashboard_address=None, scheduler_port=0 )
+# client = Client(cluster)
 
 # Chuyển mỗi adjacency list sang Graph trên GPU
 
@@ -90,7 +90,6 @@ def sample_neg(adj_list, edges, num_neg_samples_per_link=1, max_size=1_000_000, 
     pbar.close()
     neg = cp.asnumpy(cp.array(neg, dtype=cp.int32))
     return cp.asnumpy(edges_gpu), neg
-
 
 # Hàm extract + label subgraph sử dụng cuGraph ego_graph
 def extract_partition(df_part, hop, enclosing, max_label_value):
