@@ -218,6 +218,7 @@ def main():
                 with torch.amp.autocast('cuda'):
                     pos_scores = model(pos_bg)
                     neg_scores = model(neg_bg)
+                    print(f"pos_scores{pos_scores[:3]} neg_scores{neg_scores[:3]}")
                     target = torch.ones_like(pos_scores, device=device)
                     loss = loss_fn(pos_scores, neg_scores, target)
                     scaler.scale(loss).backward()
@@ -226,6 +227,7 @@ def main():
             else:
                 pos_scores = model(pos_bg)
                 neg_scores = model(neg_bg)
+                print(f"pos_scores{pos_scores[:3]} neg_scores{neg_scores[:3]}")
                 target = torch.ones_like(pos_scores, device=device)
                 loss = loss_fn(pos_scores, neg_scores, target)
                 loss.backward()
@@ -255,7 +257,7 @@ def main():
                     with torch.amp.autocast('cuda'):
                         pos_scores = model(pos_bg)
                         neg_scores = model(neg_bg)
-                        print(pos_scores[:3], neg_scores[:3])
+                        print(f"pos_scores{pos_scores[:3]} neg_scores{neg_scores[:3]}")
                         assert torch.isfinite(pos_scores).all()
                         assert torch.isfinite(neg_scores).all()
                         target = torch.ones_like(pos_scores, device=device)
@@ -263,7 +265,7 @@ def main():
                 else:
                     pos_scores = model(pos_bg)
                     neg_scores = model(neg_bg)
-                    print(pos_scores[:3], neg_scores[:3])
+                    print(f"pos_scores{pos_scores[:3]} neg_scores{neg_scores[:3]}")
                     assert torch.isfinite(pos_scores).all()
                     assert torch.isfinite(neg_scores).all()
                     target = torch.ones_like(pos_scores, device=device)
@@ -272,7 +274,6 @@ def main():
 
         avg_val_loss = val_loss / len(valid_ds)
         print(f"Epoch {epoch}/{args.epochs} - Val Loss: {avg_val_loss:.4f}")
-
 
 if __name__ == "__main__":
     main()

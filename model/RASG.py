@@ -80,6 +80,7 @@ class RASGModel(nn.Module):
             a = torch.tanh(self.attn_w(cat))  # [N, hidden]
             a = self.attn_score(a).squeeze(-1)  # [N]
             alpha = F.softmax(a, dim=0)  # [N]
+            print(f"alpha: {alpha}")
             z = torch.sum(h * alpha.unsqueeze(-1), dim=0)  # [hidden]
 
             # e) score for this subgraph
