@@ -108,33 +108,36 @@ def extract_subgraph_gpu(g, u, v, h, enclosing=True):
     return nodes, subg
 
 
-
 def extract_and_label(nodes, adj_list, params, max_label=None):
     """
-    CPU-based node labeling on pruned subgraph nodes.
+    CPU-based node labeling on the induced subgraph.
+    Returns pr_nodes, pr_labels, subgraph_size, enc_ratio, num_pruned.
     """
-    inc = incidence_matrix(adj_list)
-    inc += inc.T
-    roots = nodes[:2]
-    lvl_sets = []
-    bfs = _bfs_relational(inc, set(roots), params.max_nodes_per_hop)
-    for _ in range(params.hop):
-        try:
-            lvl_sets.append(next(bfs))
-        except StopIteration:
-            break
-    keep = [i for i, n in enumerate(nodes) if n in set().union(*lvl_sets)]
-
-    sg = inc[keep][:, keep]
-    dist1 = ssp.csgraph.dijkstra(remove_nodes(sg, [0]), indices=[0])[0]
-    dist2 = ssp.csgraph.dijkstra(remove_nodes(sg, [1]), indices=[0])[0]
-    labels = np.vstack((np.zeros((2,2), dtype=int),
-                        np.stack((dist1[1:], dist2[1:]), axis=1).astype(int)))
+    # 1) Build per-relation induced subgraph
+    sub_adjs = [A[nodes, :][:, nodes] for A in adj_list]
+    # 2) Incidence matrix
+    inc = incidence_matrix(sub_adjs)
+    inc = inc + inc.T
+    # 3) Label nodes via double-radius
+    labels, keep_idx = node_label(inc, max_distance=params.hop)
+    # 4) Prune
+    pr_nodes = [nodes[i] for i in keep_idx]
+    pr_labels = labels[keep_idx]
     if max_label is not None:
-        labels = np.minimum(labels, max_label)
-    pr_nodes = [nodes[i] for i in keep]
-    enc = len(set(nodes) & set(lvl_sets[0])) / (len(set().union(*lvl_sets)) + 1e-6)
-    return pr_nodes, labels, len(pr_nodes), enc, len(nodes) - len(pr_nodes)
+        pr_labels = np.minimum(pr_labels, max_label)
+    # 5) Stats
+    size = len(pr_nodes)
+    # Compute enclosing ratio on subgraph
+    bfs = _bfs_relational(inc, {0,1}, params.max_nodes_per_hop)
+    lvl_sets = []
+    for _ in range(params.hop):
+        try: lvl_sets.append(next(bfs))
+        except StopIteration: break
+    union_set = set().union(*lvl_sets) if lvl_sets else set()
+    enc_ratio = len(union_set & {0,1}) / (len(union_set) + 1e-6)
+    num_pruned = len(nodes) - size
+    return pr_nodes, pr_labels, size, enc_ratio, num_pruned
+
 
 
 def links2subgraphs(adj_list, graphs, params, max_label=None, use_cache=True):
@@ -191,6 +194,20 @@ def links2subgraphs(adj_list, graphs, params, max_label=None, use_cache=True):
             txn.put(sid, serialize(datum))
 
     logger.info("✅ Done: GPU used for subgraph extraction.")
+
+def node_label(inc, max_distance=1):
+    """
+    Double-radius node labeling.
+    """
+    roots = [0,1]
+    sgs = [remove_nodes(inc, [r]) for r in roots]
+    d0 = ssp.csgraph.dijkstra(sgs[0], indices=[0], directed=False, unweighted=True, limit=1e7)[1:]
+    d1 = ssp.csgraph.dijkstra(sgs[1], indices=[0], directed=False, unweighted=True, limit=1e7)[1:]
+    dist_pairs = np.stack((d0, d1), axis=1).astype(int)
+    base = np.array([[0,1],[1,0]])
+    labels = np.vstack((base, dist_pairs)) if dist_pairs.size else base
+    keep = np.where(labels.max(axis=1) <= max_distance)[0]
+    return labels, keep
 
 # import struct
 # import logging
