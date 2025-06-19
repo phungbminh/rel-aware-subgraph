@@ -19,7 +19,7 @@ config.set({'distributed.dashboard.enabled': False})
 # client = Client(cluster)
 
 # Chuyển mỗi adjacency list sang Graph trên GPU
-
+gpu_graphs = None
 
 def build_gpu_graphs(adj_list):
     gpu_graphs = []
@@ -33,10 +33,6 @@ def build_gpu_graphs(adj_list):
     return gpu_graphs
 
 
-# Khởi GPU graphs toàn cục
-gpu_graphs = None
-
-
 def init_gpu_graphs(adj_list):
     global gpu_graphs
     gpu_graphs = build_gpu_graphs(adj_list)
@@ -44,6 +40,10 @@ def init_gpu_graphs(adj_list):
 
 # GPU-negative sampling
 def sample_neg(adj_list, edges, num_neg_samples_per_link=1, max_size=1_000_000, constrained_neg_prob=0.0):
+    #edges_gpu = cp.asarray(edges, dtype=cp.int32)
+    global gpu_graphs
+    if gpu_graphs is None:
+        gpu_graphs = build_gpu_graphs(adj_list)
     edges_gpu = cp.asarray(edges, dtype=cp.int32)
     M = edges_gpu.shape[0]
     if max_size < M:
