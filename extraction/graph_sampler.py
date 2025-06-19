@@ -1,160 +1,243 @@
+import os
 import struct
 import logging
 from tqdm import tqdm
 import lmdb
+import multiprocessing as mp
 
-import cudf, cupy as cp
-import cugraph
-from cupyx.scipy.sparse import csr_matrix as cupy_csr
-
-from dask_cuda import LocalCUDACluster
-from dask.distributed import Client
-from dask import config
-import dask_cudf
 import numpy as np
+import cupy as cp
+import scipy.sparse as ssp
+from scipy.special import softmax
 
-from utils.graph_utils import serialize, get_edge_count
-config.set({'distributed.dashboard.enabled': False})
-# Khởi Dask-cuGraph cho 2 GPU
-# cluster = LocalCUDACluster(n_workers=2, dashboard_address=None, scheduler_port=0 )
-# client = Client(cluster)
+import dgl
+import torch
 
-# Chuyển mỗi adjacency list sang Graph trên GPU
-gpu_graphs = None
+from utils.dgl_utils import _bfs_relational
+from utils.graph_utils import incidence_matrix, remove_nodes, serialize, get_edge_count
 
-def build_gpu_graphs(adj_list):
-    gpu_graphs = []
-    for A in adj_list:
-        #A_gpu = cupy_csr(A)  # SciPy CSR -> CuPy CSR
-        A = A.astype(np.float32)
-        A_gpu = cupy_csr(A)
-        src, dst = A_gpu.nonzero()
-        df = cudf.DataFrame({'src': src, 'dst': dst})
-        G = cugraph.Graph(directed=True)
-        G.from_cudf_edgelist(df, source='src', destination='dst')
-        gpu_graphs.append(G)
-    return gpu_graphs
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
-def init_gpu_graphs(adj_list):
-    global gpu_graphs
-    gpu_graphs = build_gpu_graphs(adj_list)
+def sample_neg(adj_list, edges,
+               num_neg_samples_per_piplink=1,
+               max_size=1_000_000,
+               constrained_neg_prob=0.0):
+    """
+    Sample negative edges, optionally with relation‐aware constraint.
+    Returns (pos_edges, neg_edges) as numpy arrays.
+    """
+    pos_edges = edges.copy()
+    if max_size < len(pos_edges):
+        perm = np.random.permutation(len(pos_edges))[:max_size]
+        pos_edges = pos_edges[perm]
 
-
-# GPU-negative sampling
-def sample_neg(adj_list, edges, num_neg_samples_per_link=1, max_size=1_000_000, constrained_neg_prob=0.0):
-    #edges_gpu = cp.asarray(edges, dtype=cp.int32)
-    global gpu_graphs
-    if gpu_graphs is None:
-        gpu_graphs = build_gpu_graphs(adj_list)
-    edges_gpu = cp.asarray(edges, dtype=cp.int32)
-    M = edges_gpu.shape[0]
-    if max_size < M:
-        perm = cp.random.permutation(M)[:max_size]
-        edges_gpu = edges_gpu[perm]
-        M = edges_gpu.shape[0]
-
-    # distribution relation trên CPU (nhỏ)
-    edge_count = get_edge_count(adj_list)  # numpy array
-    θ = 0.001
-    rel_dist = cp.asarray(edge_count, dtype=cp.float32)
-    idx = edge_count.nonzero()
-    rel_dist[idx] = cp.exp(θ * cp.asarray(edge_count[idx]))
-    rel_dist = rel_dist / rel_dist.sum()
-
-    # valid heads/tails trên GPU
-    valid_heads = [cp.asarray(A.tocoo().row, dtype=cp.int32) for A in adj_list]
-    valid_tails = [cp.asarray(A.tocoo().col, dtype=cp.int32) for A in adj_list]
-
-    neg = []
-    pbar = tqdm(total=M * num_neg_samples_per_link)
-    i = 0
     n = adj_list[0].shape[0]
+    # relation‐wise distribution
+    theta = 0.001
+    edge_count = get_edge_count(adj_list)
+    rel_dist = np.zeros_like(edge_count, dtype=float)
+    idx = np.nonzero(edge_count)
+    rel_dist[idx] = softmax(theta * edge_count[idx])
 
-    while len(neg) < M * num_neg_samples_per_link:
-        h, t, r = int(edges_gpu[i, 0]), int(edges_gpu[i, 1]), int(edges_gpu[i, 2])
-        if cp.random.rand() < constrained_neg_prob:
-            if cp.random.rand() < 0.5:
-                h = int(cp.random.choice(valid_heads[r], size=1)[0])
+    # valid heads/tails per relation
+    valid_heads = [adj.tocoo().row for adj in adj_list]
+    valid_tails = [adj.tocoo().col for adj in adj_list]
+
+    neg_edges = []
+    pbar = tqdm(total=len(pos_edges), desc="Sampling neg")
+    while len(neg_edges) < num_neg_samples_per_link * len(pos_edges):
+        i = pbar.n % len(pos_edges)
+        h, t, r = pos_edges[i]
+        if np.random.rand() < constrained_neg_prob:
+            if np.random.rand() < 0.5:
+                h = np.random.choice(valid_heads[r])
             else:
-                t = int(cp.random.choice(valid_heads[r], size=1)[0])
+                t = np.random.choice(valid_tails[r])
         else:
-            if cp.random.rand() < 0.5:
-                h = int(cp.random.randint(0, n))
+            if np.random.rand() < 0.5:
+                h = np.random.randint(n)
             else:
-                t = int(cp.random.randint(0, n))
+                t = np.random.randint(n)
 
-        # kiểm tra cạnh tồn tại trên GPU graph
-        if h != t and not gpu_graphs[r].has_edge(h, t):
-            neg.append((h, t, r))
+        if h != t and adj_list[r][h, t] == 0:
+            neg_edges.append([h, t, r])
             pbar.update(1)
-        i = (i + 1) % M
-
     pbar.close()
-    neg = cp.asnumpy(cp.array(neg, dtype=cp.int32))
-    return cp.asnumpy(edges_gpu), neg
 
-# Hàm extract + label subgraph sử dụng cuGraph ego_graph
-def extract_partition(df_part, hop, enclosing, max_label_value):
-    import cudf, cupy as cp, cugraph
-    results = []
-    for row in df_part.itertuples():
-        u, v, r = int(row.h), int(row.t), int(row.r)
-        G = gpu_graphs[r]
-        sg = cugraph.ego_graph(G, u, radius=hop, center=True)
+    return pos_edges, np.array(neg_edges, dtype=int)
 
-        # Chuyển adjacency ego sang định dạng scipy để tái sử dụng node_label
-        src = sg.edgelist.edgelist_df['src'].to_pandas().values
-        dst = sg.edgelist.edgelist_df['dst'].to_pandas().values
-        # build scipy sparse adjacency
-        from scipy.sparse import csr_matrix
-        n_nodes = int(sg.number_of_vertices())
-        A_sub = csr_matrix((np.ones(len(src)), (src, dst)), shape=(n_nodes, n_nodes))
 
-        # gọi node_label gốc (CPU) trên A_incidence từ incidence_matrix
-        labels, idxs = node_label(cugraph.utilities.convert_from_sparse(A_sub), max_distance=hop)
-        if max_label_value is not None:
-            labels = cp.minimum(cp.asarray(labels), max_label_value).get()
+def build_relation_graph_gpu(adj_list):
+    """
+    Build a single DGL heterograph (on GPU) from per‐relation scipy sparse lists.
+    """
+    edge_dict = {('node', 'rel', 'node'): ([], [])}
+    src_all, dst_all = [], []
+    rel_type = []
+    for r, adj in enumerate(adj_list):
+        coo = adj.tocoo()
+        src_all.append(torch.from_numpy(coo.row).long())
+        dst_all.append(torch.from_numpy(coo.col).long())
+        rel_type.append(torch.full((coo.nnz,), r, dtype=torch.long))
+    src = torch.cat(src_all, dim=0)
+    dst = torch.cat(dst_all, dim=0)
+    etype_data = torch.cat(rel_type, dim=0)
+    g = dgl.heterograph(
+        {('node','rel','node'): (src, dst)},
+        num_nodes_dict={'node': adj_list[0].shape[0]}
+    )
+    g.edata['rel_type'] = etype_data
+    return g.to('cuda')
 
+
+def extract_subgraph_gpu(g, src, dst, h, enclosing=True):
+    """
+    Extract the h‐hop (enclosing or union) subgraph around (src,dst) on GPU.
+    Returns (node_list, dgl_subgraph).
+    """
+    # k-hop subgraph returns (subgraph, node_ids)
+    sg0, nid0 = dgl.khop_in_subgraph(g, [src], h)
+    sg1, nid1 = dgl.khop_in_subgraph(g, [dst], h)
+    set0 = set(nid0.tolist())
+    set1 = set(nid1.tolist())
+    if enclosing:
+        core = set0 & set1
+    else:
+        core = set0 | set1
+    # ensure src,dst first
+    node_list = [src, dst] + [n for n in core if n not in {src, dst}]
+    subg = dgl.node_subgraph(g, node_list)
+    return node_list, subg
+
+
+def get_average_subgraph_size(sample_size, links, A_list, params):
+    """
+    Estimate average serialized size (bytes) of a subgraph datum.
+    """
+    total = 0
+    for n1, n2, r in links[np.random.choice(len(links), sample_size)]:
+        nodes, n_labels, size, enc_ratio, pruned = subgraph_extraction_labeling(
+            (n1, n2), r,
+            A_list,
+            params.hop,
+            params.enclosing_sub_graph,
+            params.max_nodes_per_hop
+        )
         datum = {
-            'nodes': sg.nodes().to_array()[idxs].to_pandas().tolist(),
-            'n_labels': labels.tolist(),
-            'subgraph_size': int(len(idxs)),
-            'enc_ratio': float(len(idxs) / (A_sub.shape[0] + 1e-6)),
-            'num_pruned_nodes': int(A_sub.shape[0] - len(idxs))
+            'nodes': nodes, 'r_label': r, 'g_label': 0,
+            'n_labels': n_labels,
+            'subgraph_size': size, 'enc_ratio': enc_ratio,
+            'num_pruned_nodes': pruned
         }
-        str_id = f"{row.Index:08d}".encode('ascii')
-        results.append({'id': str_id, 'datum': serialize(datum)})
-    return cudf.DataFrame(results)
+        total += len(serialize(datum))
+    return total / sample_size
 
 
-# Giữ nguyên cấu trúc cũ, chỉ dispatch qua Dask
-def links2subgraphs(adj_list, graphs, params, max_label_value=None):
-    # init GPU graphs
-    init_gpu_graphs(adj_list)
+def _worker_init(A_list, params, max_label_value):
+    global A_, params_, max_label_value_
+    A_, params_, max_label_value_ = A_list, params, max_label_value
 
-    # build DataFrame links
-    all_rows = []
-    for split_name, split in graphs.items():
-        for sign in ['pos', 'neg']:
-            g_label = 1 if sign == 'pos' else 0
-            for (h, t, r) in split[sign]:
-                all_rows.append((h, t, r, split_name))
-    df = cudf.DataFrame(all_rows, columns=['h', 't', 'r', 'split'])
-    ddf = dask_cudf.from_cudf(df, npartitions=2)
 
-    # submit extract_partition lên Dask
-    parts = ddf.map_partitions(
-        lambda dfp: extract_partition(dfp, params.hop, params.enclosing_sub_graph, max_label_value)
-    ).compute()
+def _extract_save(args):
+    idx, ((n1, n2, r), g_label) = args
+    nodes, n_labels, size, enc_ratio, pruned = subgraph_extraction_labeling(
+        (int(n1), int(n2)), int(r),
+        A_, params_.hop,
+        params_.enclosing_sub_graph,
+        params_.max_nodes_per_hop,
+        max_label_value_
+    )
+    if max_label_value_ is not None:
+        n_labels = np.minimum(n_labels, max_label_value_)
+    datum = {
+        'nodes': nodes, 'r_label': r, 'g_label': g_label,
+        'n_labels': n_labels,
+        'subgraph_size': size, 'enc_ratio': enc_ratio,
+        'num_pruned_nodes': pruned
+    }
+    sid = f"{idx:08}".encode('ascii')
+    return sid, datum
 
-    # ghi LMDB theo split, giữ nguyên logic serialize
-    env = lmdb.open(params.db_path, map_size=params.map_size, max_dbs=6)
-    for pdf in parts.to_pandas().itertuples():
-        split = pdf.datum  # split name
-        db = env.open_db(split.encode())
+
+def generate_subgraph_datasets(A_list, graphs, params,
+                               max_label_value=None,
+                               use_cache=True):
+    """
+    A_list: list of scipy.sparse adjacency per relation
+    graphs: dict with keys 'train','valid','test', each a dict {'pos':array,'neg':array or None}
+    params: has attributes:
+      - db_path (str)
+      - hop (int)
+      - enclosing_sub_graph (bool)
+      - max_nodes_per_hop (int or None)
+      - num_neg_samples_per_link (int)
+      - constrained_neg_prob (float)
+    """
+    # 1) cache check
+    if use_cache and os.path.isdir(params.db_path):
+        try:
+            env = lmdb.open(params.db_path, readonly=True, lock=False, max_dbs=6)
+            db = env.open_db(b'train_pos')
+            with env.begin(db=db) as txn:
+                n = int.from_bytes(txn.get(b'num_graphs'), byteorder='little')
+            logger.info(f"[CACHE] found {n} train_pos subgraphs; skipping.")
+            return
+        except Exception:
+            logger.info("[CACHE] no valid LMDB; regenerating…")
+
+    # 2) build GPU graph
+    logger.info("Building relation graph on GPU…")
+    g_gpu = build_relation_graph_gpu(A_list)
+
+    # 3) prepare LMDB
+    if os.path.isdir(params.db_path):
+        os.system(f"rm -rf {params.db_path}")
+    os.makedirs(params.db_path, exist_ok=True)
+    # estimate map size
+    BYTES_PER = get_average_subgraph_size(
+        min(100, len(graphs['train']['pos'])),
+        graphs['train']['pos'], A_list, params
+    ) * 1.5
+    total_links = sum(len(graphs[s]['pos']) + (len(graphs[s]['neg']) if graphs[s]['neg'] is not None else 0)
+                      for s in graphs)
+    env = lmdb.open(params.db_path,
+                    map_size=int(total_links * BYTES_PER),
+                    max_dbs=6)
+
+    # 4) negative sampling
+    logger.info("Sampling negative edges…")
+    pos, neg = sample_neg(
+        A_list, graphs['train']['pos'],
+        num_neg_samples_per_link=params.num_neg_samples_per_link,
+        constrained_neg_prob=params.constrained_neg_prob
+    )
+    graphs['train']['pos'] = pos
+    graphs['train']['neg'] = neg
+
+    # 5) extract & save helper
+    def _save_split(name, links, labels):
+        db = env.open_db(name.encode())
         with env.begin(write=True, db=db) as txn:
-            txn.put(pdf.id, pdf.datum)
+            txn.put(b'num_graphs', len(links).to_bytes(len(links).bit_length(), 'little'))
+        args = zip(range(len(links)), zip(links, labels))
+        with mp.Pool(initializer=_worker_init, initargs=(A_list, params, max_label_value)) as pool:
+            for sid, datum in tqdm(pool.imap(_extract_save, args),
+                                   total=len(links), desc=name):
+                with env.begin(write=True, db=db) as txn:
+                    txn.put(sid, serialize(datum))
+
+    # 6) run splits
+    for split in ['train', 'valid', 'test']:
+        _save_split(f"{split}_pos",
+                    graphs[split]['pos'],
+                    np.ones(len(graphs[split]['pos']), dtype=np.int8))
+        _save_split(f"{split}_neg",
+                    graphs[split]['neg'],
+                    np.zeros(len(graphs[split]['neg']), dtype=np.int8))
+
+    logger.info(f"✅ Done. LMDB stored at: {params.db_path}")
 
 # import struct
 # import logging

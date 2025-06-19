@@ -7,10 +7,4 @@ networkx
 dgl
 matplotlib
 git+https://github.com/phungbminh/ogb.git@master#egg=ogb
-cudf-cu12
-cugraph-cu12
 cupy-cuda12x
-dask
-dask-cuda
-dask-cudf-cu12
-git+https://github.com/rapidsai/dask-cugraph.git
