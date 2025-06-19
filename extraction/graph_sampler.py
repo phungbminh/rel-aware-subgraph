@@ -19,28 +19,29 @@ logger = logging.getLogger(__name__)
 
 def sample_neg(adj_list, edges,
                num_neg_samples_per_link=1,
-               max_samples=1_000_000,
-               constrained_prob=0.0):
+               max_size=1_000_000,
+               constrained_neg_prob=0.0):
     """
     Generate negative edge samples for each positive link.
 
     Args:
         adj_list: list of scipy.sparse adjacency matrices, one per relation.
         edges: array of shape (num_pos, 3) with (head, tail, rel).
-        num_neg_per_link: number of negative samples per positive link.
-        max_samples: if >0 and less than num_pos, randomly subsample positives.
-        constrained_prob: probability to sample from same-head/tail distribution.
+        num_neg_samples_per_link: number of negative samples per positive link.
+        max_size: if >0 and less than num_edges, randomly subsample positives.
+        constrained_neg_prob: probability to sample from same-head/tail distribution.
 
     Returns:
         pos_edges: (M,3) array of positive edges used.
-        neg_edges: (M*num_neg_per_link,3) array of negative samples.
+        neg_edges: (M*num_neg_samples_per_link,3) array of negative samples.
     """
     pos_edges = edges.copy()
-    if max_samples and max_samples < len(pos_edges):
-        perm = np.random.permutation(len(pos_edges))[:max_samples]
+    if max_size > 0 and max_size < len(pos_edges):
+        perm = np.random.permutation(len(pos_edges))[:max_size]
         pos_edges = pos_edges[perm]
 
     n_nodes = adj_list[0].shape[0]
+    # relation distribution (unused here but kept for extensibility)
     theta = 0.001
     edge_count = get_edge_count(adj_list)
     rel_dist = np.zeros_like(edge_count, dtype=float)
@@ -55,7 +56,7 @@ def sample_neg(adj_list, edges,
     while len(neg_edges) < num_neg_samples_per_link * len(pos_edges):
         i = pbar.n % len(pos_edges)
         h, t, r = pos_edges[i]
-        if np.random.rand() < constrained_prob:
+        if np.random.rand() < constrained_neg_prob:
             if np.random.rand() < 0.5:
                 h = np.random.choice(valid_heads[r])
             else:
@@ -132,13 +133,30 @@ def links2subgraphs(adj_list, graph_splits, params, max_label_val=None, use_cach
 
     Args:
       adj_list: list of scipy.sparse adjacency per relation.
-      graph_splits: dict of splits with 'pos' and 'neg'.
+      graph_splits: dict of splits with keys 'train','valid','test', each a dict with:
+                    'pos': np.array of pos edges,
+                    'max_size': int max positives to sample per split,
+                    'neg': will be set inside,
+                    (and optionally existing 'neg').
       params: attributes db_path, hop, enclosing_sub_graph,
-              max_nodes_per_hop, num_neg_per_link, constrained_prob.
+              max_nodes_per_hop, num_neg_samples_per_link,
+              constrained_neg_prob.
       max_label_val: cap for node labels.
       use_cache: skip if LMDB exists.
     """
-    # cache check
+    # 1) Negative sampling for all splits
+    for split_name, info in graph_splits.items():
+        pos_edges = info['pos']
+        _, neg_edges = sample_neg(
+            adj_list=adj_list,
+            edges=pos_edges,
+            num_neg_samples_per_link=params.num_neg_samples_per_link,
+            max_size=info.get('max_size', 0),
+            constrained_neg_prob=params.constrained_neg_prob
+        )
+        info['neg'] = neg_edges
+
+    # 2) Cache check
     if use_cache and os.path.isdir(params.db_path):
         try:
             env = lmdb.open(params.db_path, readonly=True, lock=False, max_dbs=6)
@@ -150,27 +168,18 @@ def links2subgraphs(adj_list, graph_splits, params, max_label_val=None, use_cach
         except:
             logger.info("[CACHE] invalid LMDB, rebuilding...")
 
-    # prepare LMDB
+    # 3) Prepare LMDB
     if os.path.isdir(params.db_path): os.system(f"rm -rf {params.db_path}")
     os.makedirs(params.db_path, exist_ok=True)
     size_est = estimate_avg_size(min(100, len(graph_splits['train']['pos'])),
                                   graph_splits['train']['pos'],
                                   adj_list, params) * 1.5
-    total_links = sum(len(graph_splits[s]['pos']) + len(graph_splits[s].get('neg', []))
-                      for s in graph_splits)
+    total_links = sum(len(graph_splits[s]['pos']) + len(graph_splits[s]['neg']) for s in graph_splits)
     env = lmdb.open(params.db_path,
                     map_size=int(total_links * size_est),
                     max_dbs=6)
 
-    # negative sampling
-    pos, neg = sample_neg(adj_list,
-                          graph_splits['train']['pos'],
-                          params.num_neg_per_link,
-                          max_samples=None,
-                          constrained_prob=params.constrained_prob)
-    graph_splits['train']['pos'], graph_splits['train']['neg'] = pos, neg
-
-    # store helper
+    # 4) Extract & store helper
     def _store(name, links, labels):
         db = env.open_db(name.encode())
         with env.begin(write=True, db=db) as txn:
@@ -183,6 +192,7 @@ def links2subgraphs(adj_list, graph_splits, params, max_label_val=None, use_cach
                 with env.begin(write=True, db=db) as txn:
                     txn.put(sid, serialize(datum))
 
+    # 5) Run per split
     for split in ['train','valid','test']:
         _store(f"{split}_pos", graph_splits[split]['pos'],
                np.ones(len(graph_splits[split]['pos']), dtype=np.int8))
