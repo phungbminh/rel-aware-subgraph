@@ -91,20 +91,22 @@ def extract_subgraph_gpu(g, u, v, h, enclosing=True):
     GPU-based h-hop enclosing/union subgraph extraction.
     Returns node list (on CPU) and GPU subgraph.
     """
-    # Move seeds to GPU tensor
+    # Ensure seed indices are int32 for DGL
     device = g.device
-    src_seeds = torch.tensor([u], dtype=torch.long, device=device)
-    dst_seeds = torch.tensor([v], dtype=torch.long, device=device)
+    src_seeds = torch.tensor([u], dtype=torch.int32, device=device)
+    dst_seeds = torch.tensor([v], dtype=torch.int32, device=device)
     # Perform k-hop subgraph extraction on GPU
     sg_u, nid_u = dgl.khop_in_subgraph(g, src_seeds, h)
     sg_v, nid_v = dgl.khop_in_subgraph(g, dst_seeds, h)
     set_u, set_v = set(nid_u.tolist()), set(nid_v.tolist())
     core = (set_u & set_v) if enclosing else (set_u | set_v)
-    # Collect node list on CPU
+    # Assemble node list on CPU
     nodes = [u, v] + [n for n in core if n not in (u, v)]
-    # Induce subgraph on GPU
-    subg = dgl.node_subgraph(g, torch.tensor(nodes, device=device))
+    # Convert to int32 tensor on GPU for node_subgraph
+    nodes_tensor = torch.tensor(nodes, dtype=torch.int32, device=device)
+    subg = dgl.node_subgraph(g, nodes_tensor)
     return nodes, subg
+
 
 
 def extract_and_label(nodes, adj_list, params, max_label=None):
