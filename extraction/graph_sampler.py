@@ -11,6 +11,7 @@ from dask_cuda import LocalCUDACluster
 from dask.distributed import Client
 from dask import config
 import dask_cudf
+import numpy as np
 
 from utils.graph_utils import serialize, get_edge_count
 config.set({'distributed.dashboard.enabled': False})
@@ -24,7 +25,9 @@ gpu_graphs = None
 def build_gpu_graphs(adj_list):
     gpu_graphs = []
     for A in adj_list:
-        A_gpu = cupy_csr(A)  # SciPy CSR -> CuPy CSR
+        #A_gpu = cupy_csr(A)  # SciPy CSR -> CuPy CSR
+        A = A.astype(np.float32)
+        A_gpu = cupy_csr(A)
         src, dst = A_gpu.nonzero()
         df = cudf.DataFrame({'src': src, 'dst': dst})
         G = cugraph.Graph(directed=True)
