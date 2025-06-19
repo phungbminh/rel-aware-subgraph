@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def sample_neg(adj_list, edges,
-               num_neg_per_link=1,
+               num_neg_samples_per_link=1,
                max_samples=1_000_000,
                constrained_prob=0.0):
     """
@@ -52,7 +52,7 @@ def sample_neg(adj_list, edges,
 
     neg_edges = []
     pbar = tqdm(total=len(pos_edges), desc="Sampling negatives")
-    while len(neg_edges) < num_neg_per_link * len(pos_edges):
+    while len(neg_edges) < num_neg_samples_per_link * len(pos_edges):
         i = pbar.n % len(pos_edges)
         h, t, r = pos_edges[i]
         if np.random.rand() < constrained_prob:
