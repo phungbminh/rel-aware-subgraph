@@ -1,65 +1,67 @@
-import os
 import struct
 import logging
 from tqdm import tqdm
 import lmdb
 import multiprocessing as mp
-
 import numpy as np
-import cupy as cp
 import scipy.sparse as ssp
 from scipy.special import softmax
-
-import dgl
-import torch
-
+import os
 from utils.dgl_utils import _bfs_relational
 from utils.graph_utils import incidence_matrix, remove_nodes, serialize, get_edge_count
 
-logging.basicConfig(level=logging.INFO)
+# Configure logger
 logger = logging.getLogger(__name__)
 
 
-def sample_neg(adj_list, edges,
-               num_neg_samples_per_piplink=1,
-               max_size=1_000_000,
-               constrained_neg_prob=0.0):
+def sample_negatives(adj_list, edges,
+                      num_negatives_per_link=1,
+                      max_samples=1_000_000,
+                      constrained_prob=0.0):
     """
-    Sample negative edges, optionally with relation‐aware constraint.
-    Returns (pos_edges, neg_edges) as numpy arrays.
+    Generate negative edge samples for each positive link.
+
+    Args:
+        adj_list: list of scipy.sparse adjacency matrices, one per relation.
+        edges: array of shape (num_pos, 3) with (head, tail, rel).
+        num_negatives_per_link: number of negative samples per positive link.
+        max_samples: if >0 and less than num_pos, randomly subsample positives.
+        constrained_prob: probability to sample from same-head/tail distribution.
+
+    Returns:
+        pos_edges: (M,3) array of positive edges used.
+        neg_edges: (M*num_negatives_per_link,3) array of negative samples.
     """
     pos_edges = edges.copy()
-    if max_size < len(pos_edges):
-        perm = np.random.permutation(len(pos_edges))[:max_size]
+    if max_samples < len(pos_edges):
+        perm = np.random.permutation(len(pos_edges))[:max_samples]
         pos_edges = pos_edges[perm]
 
-    n = adj_list[0].shape[0]
-    # relation‐wise distribution
+    n_nodes = adj_list[0].shape[0]
     theta = 0.001
     edge_count = get_edge_count(adj_list)
     rel_dist = np.zeros_like(edge_count, dtype=float)
     idx = np.nonzero(edge_count)
     rel_dist[idx] = softmax(theta * edge_count[idx])
 
-    # valid heads/tails per relation
-    valid_heads = [adj.tocoo().row for adj in adj_list]
-    valid_tails = [adj.tocoo().col for adj in adj_list]
+    valid_heads = [adj.tocoo().row.tolist() for adj in adj_list]
+    valid_tails = [adj.tocoo().col.tolist() for adj in adj_list]
 
     neg_edges = []
-    pbar = tqdm(total=len(pos_edges), desc="Sampling neg")
-    while len(neg_edges) < num_neg_samples_per_link * len(pos_edges):
+    pbar = tqdm(total=len(pos_edges), desc="Sampling negatives")
+    while len(neg_edges) < num_negatives_per_link * len(pos_edges):
         i = pbar.n % len(pos_edges)
         h, t, r = pos_edges[i]
-        if np.random.rand() < constrained_neg_prob:
+        if np.random.rand() < constrained_prob:
             if np.random.rand() < 0.5:
                 h = np.random.choice(valid_heads[r])
             else:
                 t = np.random.choice(valid_tails[r])
         else:
             if np.random.rand() < 0.5:
-                h = np.random.randint(n)
+                h = np.random.randint(n_nodes)
             else:
-                t = np.random.randint(n)
+                t = np.random.randint(n_nodes)
 
         if h != t and adj_list[r][h, t] == 0:
             neg_edges.append([h, t, r])
@@ -69,175 +71,219 @@ def sample_neg(adj_list, edges,
     return pos_edges, np.array(neg_edges, dtype=int)
 
 
-def build_relation_graph_gpu(adj_list):
+def estimate_average_subgraph_size(sample_size, links, adj_list, params):
     """
-    Build a single DGL heterograph (on GPU) from per‐relation scipy sparse lists.
-    """
-    edge_dict = {('node', 'rel', 'node'): ([], [])}
-    src_all, dst_all = [], []
-    rel_type = []
-    for r, adj in enumerate(adj_list):
-        coo = adj.tocoo()
-        src_all.append(torch.from_numpy(coo.row).long())
-        dst_all.append(torch.from_numpy(coo.col).long())
-        rel_type.append(torch.full((coo.nnz,), r, dtype=torch.long))
-    src = torch.cat(src_all, dim=0)
-    dst = torch.cat(dst_all, dim=0)
-    etype_data = torch.cat(rel_type, dim=0)
-    g = dgl.heterograph(
-        {('node','rel','node'): (src, dst)},
-        num_nodes_dict={'node': adj_list[0].shape[0]}
-    )
-    g.edata['rel_type'] = etype_data
-    return g.to('cuda')
-
-
-def extract_subgraph_gpu(g, src, dst, h, enclosing=True):
-    """
-    Extract the h‐hop (enclosing or union) subgraph around (src,dst) on GPU.
-    Returns (node_list, dgl_subgraph).
-    """
-    # k-hop subgraph returns (subgraph, node_ids)
-    sg0, nid0 = dgl.khop_in_subgraph(g, [src], h)
-    sg1, nid1 = dgl.khop_in_subgraph(g, [dst], h)
-    set0 = set(nid0.tolist())
-    set1 = set(nid1.tolist())
-    if enclosing:
-        core = set0 & set1
-    else:
-        core = set0 | set1
-    # ensure src,dst first
-    node_list = [src, dst] + [n for n in core if n not in {src, dst}]
-    subg = dgl.node_subgraph(g, node_list)
-    return node_list, subg
-
-
-def get_average_subgraph_size(sample_size, links, A_list, params):
-    """
-    Estimate average serialized size (bytes) of a subgraph datum.
+    Estimate the average serialized size (in bytes) of a subgraph.
     """
     total = 0
     for n1, n2, r in links[np.random.choice(len(links), sample_size)]:
-        nodes, n_labels, size, enc_ratio, pruned = subgraph_extraction_labeling(
+        nodes, labels, size, enc_ratio, pruned = extract_and_label_subgraph(
             (n1, n2), r,
-            A_list,
+            adj_list,
             params.hop,
             params.enclosing_sub_graph,
             params.max_nodes_per_hop
         )
-        datum = {
-            'nodes': nodes, 'r_label': r, 'g_label': 0,
-            'n_labels': n_labels,
-            'subgraph_size': size, 'enc_ratio': enc_ratio,
-            'num_pruned_nodes': pruned
-        }
+        datum = {'nodes': nodes,
+                 'r_label': r,
+                 'g_label': 0,
+                 'n_labels': labels,
+                 'subgraph_size': size,
+                 'enc_ratio': enc_ratio,
+                 'num_pruned_nodes': pruned}
         total += len(serialize(datum))
     return total / sample_size
 
 
-def _worker_init(A_list, params, max_label_value):
-    global A_, params_, max_label_value_
-    A_, params_, max_label_value_ = A_list, params, max_label_value
+def _initialize_worker(adj_list, params, max_label_value):
+    global _A, _params, _max_label_value
+    _A = adj_list
+    _params = params
+    _max_label_value = max_label_value
 
 
-def _extract_save(args):
+def _extract_and_serialize_subgraph(args):
     idx, ((n1, n2, r), g_label) = args
-    nodes, n_labels, size, enc_ratio, pruned = subgraph_extraction_labeling(
+    nodes, labels, size, enc_ratio, pruned = extract_and_label_subgraph(
         (int(n1), int(n2)), int(r),
-        A_, params_.hop,
-        params_.enclosing_sub_graph,
-        params_.max_nodes_per_hop,
-        max_label_value_
+        _A,
+        _params.hop,
+        _params.enclosing_sub_graph,
+        _params.max_nodes_per_hop,
+        _max_label_value
     )
-    if max_label_value_ is not None:
-        n_labels = np.minimum(n_labels, max_label_value_)
+    if _max_label_value is not None:
+        labels = np.minimum(labels, _max_label_value)
     datum = {
-        'nodes': nodes, 'r_label': r, 'g_label': g_label,
-        'n_labels': n_labels,
-        'subgraph_size': size, 'enc_ratio': enc_ratio,
+        'nodes': nodes,
+        'r_label': r,
+        'g_label': g_label,
+        'n_labels': labels,
+        'subgraph_size': size,
+        'enc_ratio': enc_ratio,
         'num_pruned_nodes': pruned
     }
     sid = f"{idx:08}".encode('ascii')
     return sid, datum
 
 
-def generate_subgraph_datasets(A_list, graphs, params,
-                               max_label_value=None,
-                               use_cache=True):
+def extract_and_store_subgraphs(adj_list, graph_splits, params, max_label_value=None, use_cache=True):
     """
-    A_list: list of scipy.sparse adjacency per relation
-    graphs: dict with keys 'train','valid','test', each a dict {'pos':array,'neg':array or None}
-    params: has attributes:
-      - db_path (str)
-      - hop (int)
-      - enclosing_sub_graph (bool)
-      - max_nodes_per_hop (int or None)
-      - num_neg_samples_per_link (int)
-      - constrained_neg_prob (float)
+    Extract and cache h-hop enclosing subgraphs into LMDB.
+
+    Args:
+        adj_list: list of scipy.sparse adjacency per relation.
+        graph_splits: dict { 'train','valid','test' }
+                      each a dict {'pos': array, 'neg': array or None}.
+        params: with attributes db_path, hop, enclosing_sub_graph,
+                max_nodes_per_hop, num_neg_samples_per_link,
+                constrained_neg_prob.
+        max_label_value: cap on node labels.
+        use_cache: if True, skip extraction when DB exists.
     """
-    # 1) cache check
+    # 1) Cache check
     if use_cache and os.path.isdir(params.db_path):
         try:
             env = lmdb.open(params.db_path, readonly=True, lock=False, max_dbs=6)
             db = env.open_db(b'train_pos')
             with env.begin(db=db) as txn:
-                n = int.from_bytes(txn.get(b'num_graphs'), byteorder='little')
-            logger.info(f"[CACHE] found {n} train_pos subgraphs; skipping.")
+                count = int.from_bytes(txn.get(b'num_graphs'), byteorder='little')
+            logger.info(f"[CACHE] Found {count} train_pos subgraphs; skipping.")
             return
         except Exception:
-            logger.info("[CACHE] no valid LMDB; regenerating…")
+            logger.info("[CACHE] No valid LMDB; regenerating...")
 
-    # 2) build GPU graph
-    logger.info("Building relation graph on GPU…")
-    g_gpu = build_relation_graph_gpu(A_list)
-
-    # 3) prepare LMDB
+    # 2) Prepare LMDB
     if os.path.isdir(params.db_path):
         os.system(f"rm -rf {params.db_path}")
     os.makedirs(params.db_path, exist_ok=True)
-    # estimate map size
-    BYTES_PER = get_average_subgraph_size(
-        min(100, len(graphs['train']['pos'])),
-        graphs['train']['pos'], A_list, params
+    size_est = estimate_average_subgraph_size(
+        min(100, len(graph_splits['train']['pos'])),
+        graph_splits['train']['pos'],
+        adj_list,
+        params
     ) * 1.5
-    total_links = sum(len(graphs[s]['pos']) + (len(graphs[s]['neg']) if graphs[s]['neg'] is not None else 0)
-                      for s in graphs)
+    total_links = sum(len(graph_splits[s]['pos']) + (len(graph_splits[s]['neg']) if graph_splits[s]['neg'] is not None else 0)
+                      for s in graph_splits)
     env = lmdb.open(params.db_path,
-                    map_size=int(total_links * BYTES_PER),
+                    map_size=int(total_links * size_est),
                     max_dbs=6)
 
-    # 4) negative sampling
-    logger.info("Sampling negative edges…")
-    pos, neg = sample_neg(
-        A_list, graphs['train']['pos'],
-        num_neg_samples_per_link=params.num_neg_samples_per_link,
-        constrained_neg_prob=params.constrained_neg_prob
+    # 3) Negative sampling
+    pos, neg = sample_negatives(
+        adj_list,
+        graph_splits['train']['pos'],
+        params.num_neg_samples_per_link,
+        max_samples=None,
+        constrained_prob=params.constrained_neg_prob
     )
-    graphs['train']['pos'] = pos
-    graphs['train']['neg'] = neg
+    graph_splits['train']['pos'], graph_splits['train']['neg'] = pos, neg
 
-    # 5) extract & save helper
-    def _save_split(name, links, labels):
+    # 4) Extract & store helper
+    def _store_split(name, links, labels):
         db = env.open_db(name.encode())
         with env.begin(write=True, db=db) as txn:
             txn.put(b'num_graphs', len(links).to_bytes(len(links).bit_length(), 'little'))
         args = zip(range(len(links)), zip(links, labels))
-        with mp.Pool(initializer=_worker_init, initargs=(A_list, params, max_label_value)) as pool:
-            for sid, datum in tqdm(pool.imap(_extract_save, args),
+        with mp.Pool(initializer=_initialize_worker,
+                     initargs=(adj_list, params, max_label_value)) as pool:
+            for sid, datum in tqdm(pool.imap(_extract_and_serialize_subgraph, args),
                                    total=len(links), desc=name):
                 with env.begin(write=True, db=db) as txn:
                     txn.put(sid, serialize(datum))
 
-    # 6) run splits
+    # 5) Run per split
     for split in ['train', 'valid', 'test']:
-        _save_split(f"{split}_pos",
-                    graphs[split]['pos'],
-                    np.ones(len(graphs[split]['pos']), dtype=np.int8))
-        _save_split(f"{split}_neg",
-                    graphs[split]['neg'],
-                    np.zeros(len(graphs[split]['neg']), dtype=np.int8))
+        _store_split(f"{split}_pos",
+                     graph_splits[split]['pos'],
+                     np.ones(len(graph_splits[split]['pos']), dtype=np.int8))
+        _store_split(f"{split}_neg",
+                     graph_splits[split]['neg'],
+                     np.zeros(len(graph_splits[split]['neg']), dtype=np.int8))
 
-    logger.info(f"✅ Done. LMDB stored at: {params.db_path}")
+    logger.info(f"✅ Subgraph LMDB written to: {params.db_path}")
+
+
+def get_hop_neighbors(roots, adj_incidence, h=1, max_per_hop=None):
+    """
+    Return set of nodes within h hops from roots in the incidence matrix.
+    """
+    bfs = _bfs_relational(adj_incidence, roots, max_per_hop)
+    levels = []
+    for _ in range(h):
+        try:
+            levels.append(next(bfs))
+        except StopIteration:
+            break
+    return set().union(*levels)
+
+
+def extract_and_label_subgraph(ind, rel, adj_list,
+                                h=1, enclosing=True,
+                                max_per_hop=None,
+                                max_node_label=None):
+    """
+    Extract h-hop (enclosing or union) subgraph and label nodes.
+
+    Returns:
+      nodes: list of node IDs in the pruned subgraph.
+      labels: np.ndarray of shape (num_nodes,2) per Double-Radius scheme.
+      subgraph_size: int
+      enc_ratio: float
+      num_pruned: int
+    """
+    # build incidence
+    inc = incidence_matrix(adj_list)
+    inc += inc.T
+
+    neigh1 = get_hop_neighbors({ind[0]}, inc, h, max_per_hop)
+    neigh2 = get_hop_neighbors({ind[1]}, inc, h, max_per_hop)
+
+    if enclosing:
+        core = neigh1 & neigh2
+    else:
+        core = neigh1 | neigh2
+
+    # include roots first
+    all_nodes = [ind[0], ind[1]] + list(core - {ind[0], ind[1]})
+    sub_adjs = [adj[all_nodes, :][:, all_nodes] for adj in adj_list]
+    lab, keep = node_label(incidence_matrix(sub_adjs), max_distance=h)
+
+    pruned_nodes = np.array(all_nodes)[keep].tolist()
+    pruned_labels = lab[keep]
+    if max_node_label is not None:
+        pruned_labels = np.minimum(pruned_labels, max_node_label)
+
+    size = len(pruned_nodes)
+    enc_ratio = len(neigh1 & neigh2) / (len(neigh1 | neigh2) + 1e-6)
+    num_pruned = len(all_nodes) - size
+    return pruned_nodes, pruned_labels, size, enc_ratio, num_pruned
+
+
+def node_label(incidence, max_distance=1):
+    """
+    Double-Radius Node Labeling Scheme.
+
+    Returns labels array and indices of nodes within max_distance.
+    """
+    roots = [0,1]
+    sgs = [remove_nodes(incidence, [r]) for r in roots]
+    dists = []
+    for sg in sgs:
+        d = ssp.csgraph.dijkstra(sg, indices=[0], directed=False,
+                                 unweighted=True, limit=1e7)
+        dists.append(np.clip(d[:,1:], 0, int(1e7)))
+    dist_pairs = np.stack((dists[0][0], dists[1][0]), axis=1).astype(int)
+
+    base = np.array([[0,1],[1,0]])
+    if dist_pairs.shape[0]>0:
+        lab = np.vstack((base, dist_pairs))
+    else:
+        lab = base
+
+    keep_idx = np.where(lab.max(axis=1) <= max_distance)[0]
+    return lab, keep_idx
+
 
 # import struct
 # import logging
