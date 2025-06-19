@@ -9,10 +9,11 @@ from cupyx.scipy.sparse import csr_matrix as cupy_csr
 
 from dask_cuda import LocalCUDACluster
 from dask.distributed import Client
+from dask import config
 import dask_cudf
 
 from utils.graph_utils import serialize, get_edge_count
-
+config.set({'distributed.dashboard.enabled': False})
 # Khởi Dask-cuGraph cho 2 GPU
 cluster = LocalCUDACluster(n_workers=2, dashboard_address=None, scheduler_port=0 )
 client = Client(cluster)
