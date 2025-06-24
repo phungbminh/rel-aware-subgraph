@@ -1,7 +1,10 @@
-from .datasets import generate_subgraph_datasets, SubgraphDataset
+from .datasets import SubgraphDataset
+from .graph_sampler import extract_relation_aware_subgraph, extract_relation_aware_subgraph_cugraph
 
 __all__ = [
-    "generate_subgraph_datasets",
+    "graph_sampler",
     "SubgraphDataset",
+    "extract_relation_aware_subgraph",
+    "extract_relation_aware_subgraph_cugraph"
 
 ]

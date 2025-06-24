@@ -1,106 +1,113 @@
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
-from sklearn import metrics
-import os
+from torch.optim import AdamW
 from tqdm import tqdm
-class Trainer:
-    def __init__(self, model, train_dataset, valid_dataset=None,
-                 batch_size=32, lr=1e-3, margin=1.0,
-                 optimizer_name='Adam', device='cuda',
-                 collate_fn=None, exp_dir='.', save_every=5):
+from utils.pyg_utils import collate_pyg, move_batch_to_device_pyg
 
-        if torch.cuda.device_count() > 1:
-            print(f"=> sử dụng {torch.cuda.device_count()} GPUs")
-            model = nn.DataParallel(model)
+def train_one_epoch(model, loader, optimizer, device, margin=1.0):
+    model.train()
+    total_loss = 0
+    n_batches = 0
 
-        self.model = model.to(device)
-        self.train_dataset = train_dataset
-        self.valid_dataset = valid_dataset
-        self.batch_size = batch_size
-        self.device = device
-        self.collate_fn = collate_fn
-        self.save_every = save_every
-        self.exp_dir = exp_dir
+    for batch in tqdm(loader, desc='Train'):
+        batch = move_batch_to_device_pyg(batch, device)
+        batch_pos, g_label, r_label, batch_negs, batch_neg_g_labels, batch_neg_r_labels = batch
 
-        self.optimizer = getattr(torch.optim, optimizer_name)(
-            self.model.parameters(), lr=lr)
-        self.criterion = nn.MarginRankingLoss(margin, reduction='mean')
-        os.makedirs(self.exp_dir, exist_ok=True)
-        self.best_auc = 0
+        batch_size = batch_pos.num_graphs
+        loss = 0
 
-    @staticmethod
-    def move_batch_to_device(batch, device):
-        pos_graph, pos_label, neg_graph, neg_label = batch
-        pos_graph = pos_graph.to(device)
-        neg_graph = neg_graph.to(device)
-        pos_label = pos_label.to(device)
-        neg_label = neg_label.to(device)
-        return pos_graph, pos_label, neg_graph, neg_label
+        # Lặp từng sample trong batch (hoặc bạn có thể tối ưu song song)
+        for i in range(batch_size):
+            # Dương
+            pos_data = batch_pos.get_example(i)
+            pos_score = model(pos_data, int(r_label[i]))
+            # Âm (có thể nhiều negative cho mỗi dương)
+            neg_scores = []
+            for neg_data in batch_negs[i]:
+                neg_scores.append(model(neg_data, int(r_label[i])))  # hoặc neg_r_label[i][j] nếu cần
 
-    def train_epoch(self):
-        self.model.train()
-        dataloader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
-                                collate_fn=self.collate_fn)
-        total_loss = 0
-        all_scores = []
-        all_labels = []
-        pbar = tqdm(dataloader, desc="Training", leave=False)
-        for batch in pbar:
-            pos_graph, pos_label, neg_graph, neg_label = self.move_batch_to_device(batch, self.device)
-            self.optimizer.zero_grad()
-            score_pos = self.model(pos_graph)
-            score_neg = self.model(neg_graph)
-            # Score shape: [batch_size]
-            target = torch.ones_like(score_pos)
-            loss = self.criterion(score_pos, score_neg, target)
-            loss.backward()
-            self.optimizer.step()
-            total_loss += loss.item() * score_pos.size(0)
-            # Logging for AUC
-            all_scores.extend(score_pos.detach().cpu().tolist())
-            all_scores.extend(score_neg.detach().cpu().tolist())
-            all_labels.extend([1]*score_pos.size(0) + [0]*score_neg.size(0))
+            neg_scores = torch.stack(neg_scores)
+            pos_score = pos_score.expand_as(neg_scores)
+            ones = torch.ones_like(neg_scores)
+            loss += torch.nn.functional.margin_ranking_loss(pos_score, neg_scores, ones, margin=margin)
+        total_loss += loss.item()
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        n_batches += 1
 
-        # Calculate metrics
-        auc = metrics.roc_auc_score(all_labels, all_scores)
-        ap = metrics.average_precision_score(all_labels, all_scores)
-        return total_loss / len(self.train_dataset), auc, ap
+    return total_loss / n_batches
 
-    def eval_epoch(self):
-        self.model.eval()
-        dataloader = DataLoader(self.valid_dataset, batch_size=self.batch_size, shuffle=False,
-                                collate_fn=self.collate_fn)
-        all_scores = []
-        all_labels = []
-        with torch.no_grad():
-            for batch in dataloader:
-                pos_graph, pos_label, neg_graph, neg_label = self.move_batch_to_device(batch, self.device)
-                score_pos = self.model(pos_graph)
-                score_neg = self.model(neg_graph)
-                all_scores.extend(score_pos.cpu().tolist())
-                all_scores.extend(score_neg.cpu().tolist())
-                all_labels.extend([1]*score_pos.size(0) + [0]*score_neg.size(0))
-        auc = metrics.roc_auc_score(all_labels, all_scores)
-        ap = metrics.average_precision_score(all_labels, all_scores)
-        return auc, ap
+@torch.no_grad()
+def evaluate(model, loader, device):
+    model.eval()
+    total_mrr = 0
+    total_hits = [0, 0, 0]  # Hits@1, @3, @10
+    count = 0
 
-    def save_model(self, filename):
-        torch.save(self.model.state_dict(), os.path.join(self.exp_dir, filename))
+    for batch in tqdm(loader, desc='Eval'):
+        batch = move_batch_to_device_pyg(batch, device)
+        batch_pos, g_label, r_label, batch_negs, batch_neg_g_labels, batch_neg_r_labels = batch
+        batch_size = batch_pos.num_graphs
 
-    def train(self, num_epochs=20):
-        for epoch in range(1, num_epochs+1):
-            train_loss, train_auc, train_ap = self.train_epoch()
-            print(f"Epoch {epoch}/{num_epochs}: Train Loss={train_loss:.4f}, AUC={train_auc:.4f}, AP={train_ap:.4f}")
+        for i in range(batch_size):
+            pos_data = batch_pos.get_example(i)
+            pos_score = model(pos_data, int(r_label[i])).item()
+            neg_scores = [model(neg_data, int(r_label[i])).item() for neg_data in batch_negs[i]]
+            scores = [pos_score] + neg_scores
+            rank = 1 + sum([s > pos_score for s in neg_scores])
+            total_mrr += 1.0 / rank
+            for idx, K in enumerate([1,3,10]):
+                total_hits[idx] += int(rank <= K)
+            count += 1
 
-            # Validation
-            if self.valid_dataset is not None:
-                val_auc, val_ap = self.eval_epoch()
-                print(f"           [Validation] AUC={val_auc:.4f}, AP={val_ap:.4f}")
-                if val_auc > self.best_auc:
-                    self.save_model("best_model.pt")
-                    self.best_auc = val_auc
+    mrr = total_mrr / count
+    hits = [h / count for h in total_hits]
+    return mrr, hits
 
-            if epoch % self.save_every == 0:
-                self.save_model(f"model_epoch_{epoch}.pt")
+def run_training(
+    model, train_dataset, valid_dataset, test_dataset,
+    epochs, batch_size, device, lr=1e-3, margin=1.0, patience=6
+):
+    train_loader = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_pyg
+    )
+    valid_loader = DataLoader(
+        valid_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_pyg
+    )
+    test_loader = DataLoader(
+        test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_pyg
+    )
+
+    model = model.to(device)
+    optimizer = AdamW(model.parameters(), lr=lr)
+
+    best_mrr = 0
+    patience_cnt = 0
+
+    for epoch in range(1, epochs+1):
+        print(f"\n=== Epoch {epoch} ===")
+        loss = train_one_epoch(model, train_loader, optimizer, device, margin)
+        print(f"Train loss: {loss:.4f}")
+
+        mrr, hits = evaluate(model, valid_loader, device)
+        print(f"Valid MRR: {mrr:.4f}, Hits@1/3/10: {hits}")
+
+        if mrr > best_mrr:
+            best_mrr = mrr
+            patience_cnt = 0
+            # Bạn có thể lưu model tốt nhất tại đây
+            torch.save(model.state_dict(), "best_model.pt")
+        else:
+            patience_cnt += 1
+            if patience_cnt >= patience:
+                print("Early stopping!")
+                break
+
+    print("\n==== Final evaluation on Test set ====")
+    model.load_state_dict(torch.load("best_model.pt"))
+    mrr, hits = evaluate(model, test_loader, device)
+    print(f"Test MRR: {mrr:.4f}, Hits@1/3/10: {hits}")
+
+    return mrr, hits
 

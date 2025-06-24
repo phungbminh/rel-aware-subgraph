@@ -1,91 +1,90 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import dgl
-from dgl.nn.pytorch import RelGraphConv
+from torch_geometric.nn import MessagePassing, GlobalAttention
+from torch_geometric.utils import softmax
 
-
-class RASGModel(nn.Module):
-    """
-    GraIL++ model for link prediction on enclosing subgraphs.
-
-    - input: a (batched) DGLGraph with
-        ndatas:
-          'feat'       : Tensor[N_total, in_feat_dim]   (one‐hot distance labels ± optional KGE feats)
-          'query_rel'  : LongTensor[N_total]             (relation id of the target link)
-        edata:
-          'type'       : LongTensor[E_total]             (edge‐type ids)
-    - output: scores per graph: Tensor[batch_size]
-    """
-
-    def __init__(self,
-                 in_feat_dim: int,
-                 rel_emb_dim: int,
-                 hidden_dim: int,
-                 num_rels: int,
-                 num_bases: int = None,
-                 num_layers: int = 2):
+class NodeLabelEmbedding(nn.Module):
+    def __init__(self, max_dist, emb_dim):
         super().__init__()
-        self.num_layers = num_layers
+        self.label_emb1 = nn.Embedding(max_dist+1, emb_dim)
+        self.label_emb2 = nn.Embedding(max_dist+1, emb_dim)
+    def forward(self, node_label):
+        # node_label: [N, 2]  (d(h,v), d(t,v))
+        return torch.cat([
+            self.label_emb1(node_label[:,0].clamp(max=self.label_emb1.num_embeddings-1)),
+            self.label_emb2(node_label[:,1].clamp(max=self.label_emb2.num_embeddings-1))
+        ], dim=-1)   # [N, emb_dim*2]
 
-        # 1) embedding cho quan hệ truy vấn
-        self.rel_emb = nn.Embedding(num_rels, rel_emb_dim)
+class RelationEmbedding(nn.Module):
+    def __init__(self, num_rels, emb_dim):
+        super().__init__()
+        self.rel_emb = nn.Embedding(num_rels, emb_dim)
+    def forward(self, rel_id, size):
+        # rel_id: int (target relation), size: num_nodes (for broadcast)
+        e = self.rel_emb(torch.tensor(rel_id, device=self.rel_emb.weight.device))
+        return e.unsqueeze(0).repeat(size, 1)  # [num_nodes, emb_dim]
 
-        # 2) project input (feat ⊕ rel_emb) → hidden_dim
-        self.input_proj = nn.Linear(in_feat_dim + rel_emb_dim, hidden_dim)
+# ----------- CompGCN layer (1 block) -------------
+class CompGCNConv(MessagePassing):
+    def __init__(self, in_dim, out_dim, num_rels, act=F.relu):
+        super().__init__(aggr='add')
+        self.lin_node = nn.Linear(in_dim, out_dim)
+        self.lin_rel = nn.Embedding(num_rels, out_dim)
+        self.act = act
+    def forward(self, x, edge_index, edge_type):
+        # x: [N, d], edge_index: [2, E], edge_type: [E]
+        rel_emb = self.lin_rel(edge_type)  # [E, d]
+        # GNN: truyền thông điệp (neighbor + rel)
+        return self.propagate(edge_index, x=x, rel_emb=rel_emb)
+    def message(self, x_j, rel_emb):
+        # x_j: neighbor feature [E, d], rel_emb [E, d]
+        return x_j + rel_emb
+    def update(self, aggr_out, x):
+        return self.act(self.lin_node(aggr_out) + x)
 
-        # 3) relational GNN layers (CompGCN / R-GCN style)
-        self.convs = nn.ModuleList()
-        for _ in range(num_layers):
-            # basis decomposition R-GCN
-            self.convs.append(
-                RelGraphConv(in_feat=hidden_dim,
-                             out_feat=hidden_dim,
-                             num_rels=num_rels,
-                             regularizer='basis',
-                             num_bases=num_bases or num_rels)
-            )
+# ----------- Attention Pooling -----------
+class AttPool(nn.Module):
+    def __init__(self, in_dim, att_dim=64):
+        super().__init__()
+        self.gate_nn = nn.Sequential(
+            nn.Linear(in_dim, att_dim), nn.LeakyReLU(0.2), nn.Linear(att_dim, 1)
+        )
+    def forward(self, x):
+        att_score = self.gate_nn(x)   # [N, 1]
+        att_weight = torch.softmax(att_score, dim=0)  # [N, 1]
+        return (att_weight * x).sum(dim=0)            # [in_dim]
 
+# -------------- Full RASG Model -------------------
+class RASGModel(nn.Module):
+    def __init__(self, num_rels, node_label_max_dist, node_label_emb_dim=16,
+                 rel_emb_dim=32, gnn_hidden_dim=128, num_layers=3, att_dim=64, out_dim=1):
+        super().__init__()
+        self.node_label_emb = NodeLabelEmbedding(node_label_max_dist, node_label_emb_dim)
+        self.rel_emb = RelationEmbedding(num_rels, rel_emb_dim)
+        self.input_dim = node_label_emb_dim*2 + rel_emb_dim
+        self.comp_layers = nn.ModuleList([
+            CompGCNConv(self.input_dim if i==0 else gnn_hidden_dim, gnn_hidden_dim, num_rels)
+            for i in range(num_layers)
+        ])
+        self.att_pool = AttPool(gnn_hidden_dim, att_dim)
+        self.final_linear = nn.Linear(gnn_hidden_dim*3, out_dim)
 
-        # 4) attention‐based pooling conditioned on e_r
-        #    hidden_dim + rel_emb_dim -> attn score
-        self.attn_w = nn.Linear(hidden_dim + rel_emb_dim, hidden_dim)
-        self.attn_score = nn.Linear(hidden_dim, 1)
-
-        # 5) final scoring head
-        self.scoring = nn.Linear(hidden_dim, 1)
-
-    def forward(self, bg: dgl.DGLGraph) -> torch.Tensor:
-        # unpack batched graph into a list so we can pool per subgraph
-        graphs = dgl.unbatch(bg)
-        out_scores = []
-        for g in graphs:
-            h = g.ndata['feat']  # [N, in_feat_dim]
-            qrels = g.ndata['query_rel']  # [N]
-            etypes = g.edata['type']  # [E]
-
-            # a) relation embedding per node
-            er = self.rel_emb(qrels)  # [N, rel_emb_dim]
-
-            # b) initial projection
-            h = torch.cat([h, er], dim=-1)  # [N, in+rel]
-            h = F.relu(self.input_proj(h))  # [N, hidden]
-
-            # c) relational message‐passing
-            for conv in self.convs:
-                h = F.relu(conv(g, h, etypes))
-
-            # d) attention pooling
-            cat = torch.cat([h, er], dim=-1)  # [N, hidden+rel]
-            a = torch.tanh(self.attn_w(cat))  # [N, hidden]
-            a = self.attn_score(a).squeeze(-1)  # [N]
-            alpha = F.softmax(a, dim=0)  # [N]
-            #print(f"alpha: {alpha}")
-            z = torch.sum(h * alpha.unsqueeze(-1), dim=0)  # [hidden]
-
-            # e) score for this subgraph
-            score = self.scoring(z)  # [1]
-            out_scores.append(score)
-
-        # stack → [batch_size, 1] → squeeze → [batch_size]
-        return torch.stack(out_scores, dim=0).squeeze(-1)
+    def forward(self, data, rel_id):
+        # data: PyG Data,  1 subgraph
+        # rel_id: int, id relation của triple này (lấy từ data.r_label)
+        # Node label embedding
+        node_label_emb = self.node_label_emb(data.node_label)    # [N, label_emb*2]
+        rel_emb = self.rel_emb(rel_id, data.num_nodes)           # [N, rel_emb_dim]
+        x = torch.cat([node_label_emb, rel_emb], dim=1)          # [N, d]
+        # CompGCN encode
+        for layer in self.comp_layers:
+            x = layer(x, data.edge_index, data.edge_type)
+        # Attention pooling toàn subgraph
+        z_subgraph = self.att_pool(x)    # [hidden_dim]
+        # Lấy embedding của node h và t (trong subgraph, idx relabel sau extract)
+        h_vec = x[data.h_idx]
+        t_vec = x[data.t_idx]
+        final_vec = torch.cat([z_subgraph, h_vec, t_vec], dim=-1)   # [hidden_dim*3]
+        score = self.final_linear(final_vec).squeeze(-1)            # [1] (nếu out_dim=1)
+        return score
