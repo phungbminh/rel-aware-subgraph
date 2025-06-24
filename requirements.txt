@@ -12,6 +12,6 @@ numpy
 tqdm
 lmdb
 git+https://github.com/phungbminh/ogb.git@master#egg=ogb
-cudf
-cugraph
-cupy
+cudf-cu12
+cugraph-cu12
+cupy-cuda12x
