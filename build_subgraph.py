@@ -107,6 +107,11 @@ def build_split_subgraph_parallel(
     db_path, num_neg_samples_per_link=1, k=2, tau=2,
     map_size=int(2e10), num_workers=4, max_links=None, backend=None, graph=None
 ):
+    import pickle
+    import os
+    import lmdb
+    from tqdm import tqdm
+
     # Chuẩn bị LMDB
     if not os.path.exists(db_path):
         os.makedirs(db_path)
@@ -117,23 +122,39 @@ def build_split_subgraph_parallel(
         triples = triples[:max_links]
         print(f"Processing only {max_links} triples for split={split_name}")
 
-    # Pool chuẩn spawn context cho MacOS/Linux/Windows
-    ctx = mp.get_context("spawn")
-    with env.begin(write=True) as txn:
-        with ctx.Pool(
-                processes=num_workers,
-                initializer=_init_worker,
-                initargs=(edge_index, edge_type, num_nodes, k, tau, num_neg_samples_per_link, backend, graph)
-        ) as pool:
-            for idx, result in tqdm(
-                enumerate(pool.imap(extract_for_one_worker, triples)),
-                total=len(triples), desc=f"Build {split_name} subgraphs"
+    if backend == "cugraph":
+        # ---- CHẠY TUẦN TỰ TRÊN GPU ----
+        print(f"[INFO] Using cuGraph (GPU) – run sequentially (no multiprocessing pool)")
+        with env.begin(write=True) as txn:
+            for idx, triple in tqdm(
+                enumerate(triples), total=len(triples), desc=f"Build {split_name} subgraphs"
             ):
+                result = extract_for_one_worker(triple)
                 if result is None:
                     continue
                 subgraph_data, neg_samples = result
                 txn.put(str(idx).encode(), pickle.dumps(subgraph_data), db=db_pos)
                 txn.put(str(idx).encode(), pickle.dumps(neg_samples), db=db_neg)
+    else:
+        # ---- DÙNG MULTIPROCESSING CHO CPU ----
+        print(f"[INFO] Using PyG (CPU) – run with multiprocessing Pool ({num_workers} workers)")
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        with env.begin(write=True) as txn:
+            with ctx.Pool(
+                processes=num_workers,
+                initializer=_init_worker,
+                initargs=(edge_index, edge_type, num_nodes, k, tau, num_neg_samples_per_link, backend, graph)
+            ) as pool:
+                for idx, result in tqdm(
+                    enumerate(pool.imap(extract_for_one_worker, triples)),
+                    total=len(triples), desc=f"Build {split_name} subgraphs"
+                ):
+                    if result is None:
+                        continue
+                    subgraph_data, neg_samples = result
+                    txn.put(str(idx).encode(), pickle.dumps(subgraph_data), db=db_pos)
+                    txn.put(str(idx).encode(), pickle.dumps(neg_samples), db=db_neg)
     print(f"Saved {len(triples)} positive/negative subgraphs to {db_path}")
 
 def main():
