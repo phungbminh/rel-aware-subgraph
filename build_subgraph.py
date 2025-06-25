@@ -6,7 +6,7 @@ import numpy as np
 from tqdm import tqdm
 from ogb.linkproppred import LinkPropPredDataset
 from utils.graph_utils import ssp_multigraph_to_pyg
-from utils.cugraph_utils import build_cugraph, cugraph_shortest_dist, build_cugraph_simple
+from utils.cugraph_utils import build_cugraph, cugraph_shortest_dist, build_cugraph_simple, filter_triples_by_degree
 from extraction import (
     extract_relation_aware_subgraph,         # bản CPU cũ
     extract_relation_aware_subgraph_cugraph  # bản GPU (mới)
@@ -212,7 +212,19 @@ def main():
 
     # Chuyển sang PyG Data
     pyg_graph = ssp_multigraph_to_pyg(adj_list)
-    edge_index, edge_type = pyg_graph.edge_index, pyg_graph.edge_type
+
+    #edge_index, edge_type = pyg_graph.edge_index, pyg_graph.edge_type
+    heads_torch = torch.from_numpy(triples_all[:, 0])
+    tails_torch = torch.from_numpy(triples_all[:, 2])
+    rels_torch = torch.from_numpy(triples_all[:, 1])
+    # Nối 2 chiều:
+    edge_index = torch.cat([
+        torch.stack([heads_torch, tails_torch], dim=0),
+        torch.stack([tails_torch, heads_torch], dim=0)
+    ], dim=1)
+    edge_type = torch.cat([rels_torch, rels_torch], dim=0)
+
+
     num_nodes = pyg_graph.num_nodes
 
     # Detect backend và build graph phù hợp
@@ -221,7 +233,11 @@ def main():
     # 3. Build subgraph cho từng split
     for split in args.split:
         edges = split_edge[split]
-        triples = np.stack([edges['head'], edges['tail'], edges['relation']], axis=1)
+        #triples = np.stack([edges['head'], edges['tail'], edges['relation']], axis=1)
+        heads, tails, rels = filter_triples_by_degree(
+            edges['head'], edges['tail'], edges['relation'], max_degree=500
+        )
+        triples = np.stack([heads, tails, rels], axis=1)
         db_path = os.path.join(args.db_root, f"lmdb_{split}")
         build_split_subgraph_parallel(
             split_name=split,

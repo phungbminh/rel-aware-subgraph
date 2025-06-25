@@ -44,6 +44,12 @@ def cugraph_k_hop(G, nodes, k):
         all_nodes.append(neighbors)
     all_nodes = np.unique(np.concatenate(all_nodes))
     return all_nodes.astype(np.int64)
+# Cập nhật trong utils/cugraph_utils.py:
+def cugraph_k_hop_batch(G, seed_nodes, k):
+    bfs_result = cugraph.bfs(G, start=seed_nodes, depth_limit=k)
+    all_nodes = bfs_result['vertex'].values_host
+    return np.unique(all_nodes).astype(np.int64)
+
 
 def filter_by_relation_tau(G, sub_nodes, rel, tau):
     """
@@ -89,3 +95,17 @@ def cugraph_shortest_dist(G, source, node_list):
     dist_map = dict(zip(bfs_result['vertex'].values_host, bfs_result['distance'].values_host))
     # -1 cho unreachable node (hoặc dùng 999 để mask)
     return np.array([dist_map.get(int(n), -1) for n in node_list], dtype=np.int64)
+
+from collections import Counter
+
+def compute_degrees(heads, tails):
+    out_deg = Counter(heads.tolist())
+    in_deg = Counter(tails.tolist())
+    return out_deg, in_deg
+
+def filter_triples_by_degree(heads, tails, rels, max_degree=500):
+    out_deg, in_deg = compute_degrees(heads, tails)
+    mask = [(out_deg[int(h)] <= max_degree and in_deg[int(t)] <= max_degree)
+            for h, t in zip(heads, tails)]
+    mask = np.array(mask)
+    return heads[mask], tails[mask], rels[mask]
