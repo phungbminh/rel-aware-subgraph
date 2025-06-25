@@ -60,20 +60,20 @@ def extract_relation_aware_subgraph(edge_index, edge_type, h, t, r, num_nodes, k
     t0 = time.time()
     # 1. K-hop subgraph quanh h và t
     subset_h, _, _, _ = k_hop_subgraph(torch.tensor([h], dtype=torch.long), k, edge_index, relabel_nodes=False, num_nodes=num_nodes)
-    print(f"[extract_subgraph] k_hop_subgraph(h): {len(subset_h)} nodes, time {time.time()-t0:.3f}s")
+    #print(f"[extract_subgraph] k_hop_subgraph(h): {len(subset_h)} nodes, time {time.time()-t0:.3f}s")
     t1 = time.time()
     subset_t, _, _, _ = k_hop_subgraph(torch.tensor([t], dtype=torch.long), k, edge_index, relabel_nodes=False, num_nodes=num_nodes)
-    print(f"[extract_subgraph] k_hop_subgraph(t): {len(subset_t)} nodes, time {time.time()-t1:.3f}s")
+    #print(f"[extract_subgraph] k_hop_subgraph(t): {len(subset_t)} nodes, time {time.time()-t1:.3f}s")
     t2 = time.time()
     subset = torch.unique(torch.cat([subset_h, subset_t]))
-    print(f"[extract_subgraph] Union nodes: {len(subset)}")
+    #print(f"[extract_subgraph] Union nodes: {len(subset)}")
     # 2. Lọc node có số cạnh relation r ≥ tau
     mask_r = (edge_type == r)
     rel_counts = torch.zeros(num_nodes, dtype=torch.long)
     rel_counts.scatter_add_(0, edge_index[0, mask_r], torch.ones(mask_r.sum(), dtype=torch.long))
     mask_subset = (rel_counts[subset] >= tau)
     filtered_nodes = subset[mask_subset]
-    print(f"[extract_subgraph] Filtered nodes (rel=={r}, tau>={tau}): {len(filtered_nodes)} (time {time.time()-t2:.3f}s)")
+    #print(f"[extract_subgraph] Filtered nodes (rel=={r}, tau>={tau}): {len(filtered_nodes)} (time {time.time()-t2:.3f}s)")
     t3 = time.time()
     # 3. Node labeling
     #dist_h = bfs_shortest_dist(edge_index, h, num_nodes)[filtered_nodes]
@@ -82,14 +82,14 @@ def extract_relation_aware_subgraph(edge_index, edge_type, h, t, r, num_nodes, k
     dist_h = bfs_shortest_dist(edge_index, num_nodes, h)[filtered_nodes]
     dist_t = bfs_shortest_dist(edge_index, num_nodes, t)[filtered_nodes]
     node_label = torch.stack([dist_h, dist_t], dim=1)
-    print(f"[extract_subgraph] Node labeling done (time {time.time()-t3:.3f}s)")
+    #print(f"[extract_subgraph] Node labeling done (time {time.time()-t3:.3f}s)")
     t4 = time.time()
     # 4. Subgraph (edge_index/edge_type) cho node đã lọc
     sub_edge_index, sub_edge_type, edge_mask = subgraph(
         filtered_nodes, edge_index, edge_attr=edge_type, relabel_nodes=True, return_edge_mask=True
     )
-    print(f"[extract_subgraph] Subgraph: {sub_edge_index.shape[1]} edges (time {time.time()-t4:.3f}s)")
-    print(f"[extract_subgraph] TOTAL TIME: {time.time()-t0:.3f}s")
+    #print(f"[extract_subgraph] Subgraph: {sub_edge_index.shape[1]} edges (time {time.time()-t4:.3f}s)")
+    #print(f"[extract_subgraph] TOTAL TIME: {time.time()-t0:.3f}s")
     return filtered_nodes, sub_edge_index, sub_edge_type, node_label
 
 
