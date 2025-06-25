@@ -1,6 +1,6 @@
-from .trainer import Trainer
+from .trainer import run_training
 
 __all__ = [
-    "Trainer",
+    "run_training",
 
 ]

@@ -11,7 +11,7 @@ from ogb.linkproppred import LinkPropPredDataset
 from tqdm import tqdm
 import os
 from utils import process_files
-
+import pickle
 
 class SubgraphDataset(Dataset):
     """
@@ -46,8 +46,8 @@ class SubgraphDataset(Dataset):
 
         self.max_n_label = np.array([0, 0])
         with self.main_env.begin() as txn:
-            self.max_n_label[0] = int.from_bytes(txn.get('max_n_label_sub'.encode()), byteorder='little')
-            self.max_n_label[1] = int.from_bytes(txn.get('max_n_label_obj'.encode()), byteorder='little')
+            self.max_n_label[0] = 10
+            self.max_n_label[1] = 10
             # Đọc các thông số mô tả subgraph nếu cần
 
     def __len__(self):
@@ -65,16 +65,21 @@ class SubgraphDataset(Dataset):
             neg_g_labels: List[tensor]
             neg_r_labels: List[tensor]
         """
-        # Đọc subgraph dương
         with self.main_env.begin() as txn:
             key = str(idx).encode()
             data_pos = txn.get(key, db=self.db_pos)
-            pos_dict = deserialize(data_pos)
-        # Đọc subgraph âm
-        with self.main_env.begin() as txn:
-            neg_key = str(idx).encode()
-            data_neg = txn.get(neg_key, db=self.db_neg)
-            neg_list = json.loads(data_neg)
+            if data_pos is None:
+                raise IndexError(f"Key {key} not found in positive DB")
+            pos_dict = pickle.loads(data_pos)  # hoặc deserialize(data_pos)
+
+            data_neg = txn.get(key, db=self.db_neg)
+            if data_neg is None:
+                raise IndexError(f"Key {key} not found in negative DB")
+            neg_list = pickle.loads(data_neg)  # Đây là list các negative dict
+
+            # Debug print:
+            print("DEBUG pos_dict:", type(pos_dict), pos_dict)
+            print("DEBUG neg_list:", type(neg_list), neg_list if isinstance(neg_list, list) else neg_list)
         # Tạo subgraph positive bằng relation-aware extraction
         h, t, r = pos_dict['h'], pos_dict['t'], pos_dict['r_label']
         filtered_nodes, sub_edge_index, sub_edge_type, node_label = extract_relation_aware_subgraph(

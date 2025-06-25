@@ -72,7 +72,7 @@ def save_to_file(directory, file_name, triplets, id2entity, id2relation):
             f.write('\t'.join([id2entity[s], id2relation[r], id2entity[o]]) + '\n')
 
 
-def process_files(files, saved_relation2id=None):
+def process_files(relations_dir, saved_relation2id=None):
     """
     files: dict với key 'relations' trỏ tới thư mục raw/relations
            (mỗi folder con là một quan hệ, chứa edge.csv.gz, edge_reltype.csv.gz, num-edge-list.csv.gz)
@@ -86,7 +86,6 @@ def process_files(files, saved_relation2id=None):
       - id2entity      : dict contig_id -> raw_id
       - id2relation    : dict rel_idx -> rel_name
     """
-    relations_dir = files['relations']
     # 1) liệt kê tên các folder con (mỗi folder là 1 quan hệ)
     rel_folders = sorted([
         d for d in os.listdir(relations_dir)

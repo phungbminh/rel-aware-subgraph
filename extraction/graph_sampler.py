@@ -73,9 +73,21 @@ def extract_relation_aware_subgraph(edge_index, edge_type, h, t, r, num_nodes, k
     rel_counts.scatter_add_(0, edge_index[0, mask_r], torch.ones(mask_r.sum(), dtype=torch.long))
     mask_subset = (rel_counts[subset] >= tau)
     filtered_nodes = subset[mask_subset]
+
+    if len(filtered_nodes) == 0:
+        filtered_nodes = np.array([h, t], dtype=np.int64)
+    else:
+        filtered_nodes = np.array(filtered_nodes, dtype=np.int64)
+        filtered_nodes = np.unique(np.concatenate([filtered_nodes, np.array([h, t], dtype=np.int64)]))
+
+    # KHÔNG bỏ qua subgraph size nhỏ, chỉ cảnh báo nếu cần
+    if len(filtered_nodes) <= 1:
+        print(f"[WARNING] Subgraph size too small for triple ({h}, {t}, {r})")
     #print(f"[extract_subgraph] Filtered nodes (rel=={r}, tau>={tau}): {len(filtered_nodes)} (time {time.time()-t2:.3f}s)")
+
     t3 = time.time()
     # 3. Node labeling
+
     #dist_h = bfs_shortest_dist(edge_index, h, num_nodes)[filtered_nodes]
     #dist_t = bfs_shortest_dist(edge_index, t, num_nodes)[filtered_nodes]
 
@@ -107,6 +119,16 @@ def extract_relation_aware_subgraph_cugraph(G_simple, G_full, h, t, r, k, tau, v
     t_filter = time.time()
     filtered_nodes = filter_by_relation_tau(G_full, sub_nodes, r, tau)
     times['relation_filter'] = time.time() - t_filter
+    if len(filtered_nodes) == 0:
+        filtered_nodes = np.array([h, t], dtype=np.int64)
+    else:
+        filtered_nodes = np.unique(np.concatenate([filtered_nodes, [h, t]]))
+
+        # BỔ SUNG: Bỏ qua subgraph size <= 2
+    if len(filtered_nodes) <= 2:
+        # Có thể log lại trường hợp này nếu muốn debug
+        # print(f"[WARNING] Subgraph size too small for triple ({h}, {t}, {r})")
+        return None, None, None, None
     if verbose:
         print(f"[extract_subgraph] Filtered nodes (rel=={r}, tau>={tau}): {len(filtered_nodes)} (time {times['relation_filter']:.3f}s)")
     if len(filtered_nodes) == 0:

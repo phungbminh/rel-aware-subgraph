@@ -1,9 +1,9 @@
-import cudf
-import cugraph
 import torch
 import numpy as np
 
 def build_cugraph_simple(edge_index):
+    import cudf
+    import cugraph
     """
     Build a simple directed cugraph.Graph (no edge type) for BFS/k-hop extraction.
     """
@@ -15,6 +15,7 @@ def build_cugraph_simple(edge_index):
     return G
 
 def edge_index_to_cudf(edge_index, edge_type):
+    import cudf
     """
     Convert edge_index, edge_type (torch) to cudf DataFrame for cuGraph MultiGraph.
     """
@@ -25,6 +26,7 @@ def edge_index_to_cudf(edge_index, edge_type):
     return df
 
 def build_cugraph(edge_index, edge_type):
+    import cugraph
     """
     Build a cuGraph.MultiGraph with edge types.
     """
@@ -34,6 +36,7 @@ def build_cugraph(edge_index, edge_type):
     return G
 
 def cugraph_k_hop(G, nodes, k):
+    import cugraph
     """
     Get all k-hop neighbors (union) for a list of nodes using cugraph.Graph.
     """
@@ -46,6 +49,7 @@ def cugraph_k_hop(G, nodes, k):
     return all_nodes.astype(np.int64)
 # Cập nhật trong utils/cugraph_utils.py:
 def cugraph_k_hop_batch(G, seed_nodes, k):
+    import cugraph
     bfs_result = cugraph.bfs(G, start=seed_nodes, depth_limit=k)
     all_nodes = bfs_result['vertex'].values_host
     return np.unique(all_nodes).astype(np.int64)
@@ -87,6 +91,7 @@ def extract_cugraph_subgraph(G, node_ids):
     return edge_index, edge_type, len(node_ids), old2new
 
 def cugraph_shortest_dist(G, source, node_list):
+    import cugraph
     """
     Compute shortest path length from source to all nodes in node_list using cugraph.BFS.
     Returns -1 for unreachable nodes.

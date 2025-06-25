@@ -59,6 +59,13 @@ def extract_for_one_worker(triple: Tuple[int, int, int]) -> Optional[Tuple[dict,
                 global_edge_index, global_edge_type, int(h), int(t), int(r),
                 global_num_nodes, global_k, global_tau
             )
+
+        if filtered_nodes is not  None:
+            print(filtered_nodes)
+        if filtered_nodes is None or len(filtered_nodes) <= 2:
+            # Skip trường hợp subgraph rỗng hoặc size <= 2
+            return None
+
         subgraph_data = {'h': int(h), 't': int(t), 'r_label': int(r), 'g_label': 1, 'nodes': filtered_nodes.tolist()}
 
         # --- Negative sampling ---
@@ -87,7 +94,7 @@ def extract_for_one_worker(triple: Tuple[int, int, int]) -> Optional[Tuple[dict,
             neg_samples.append(neg_data)
         return subgraph_data, neg_samples
     except Exception as e:
-        print(f"[WARNING] Skip triple ({h},{t},{r}) with error: {e}")
+        #print(f"[WARNING] Skip triple ({h},{t},{r}) with error: {e}")
         return None
 
 def build_graph_backend(edge_index: torch.Tensor, edge_type: torch.Tensor, backend: str):
@@ -184,6 +191,7 @@ def main():
     parser.add_argument("--max-links", type=int, default=None, help="Max number of triples per split (for fast test)")
     parser.add_argument("--backend", type=str, default="pyg", choices=["pyg", "cugraph"],
                         help="Subgraph extraction backend: 'pyg' (CPU) or 'cugraph' (GPU)")
+    parser.add_argument("--top-k", type=int, default=None)
     args = parser.parse_args()
 
     # 1. Load OGB-BioKG và chia split
@@ -200,6 +208,27 @@ def main():
     n_entities = int(triples_all[:, [0, 2]].max()) + 1
     n_relations = int(triples_all[:, 1].max()) + 1
     print(f"KG: {n_entities} entities, {n_relations} relations")
+    if args.top_k is not None:
+        degrees = np.bincount(triples_all[:, 0]) + np.bincount(triples_all[:, 2])
+        if len(degrees) < triples_all[:, [0, 2]].max() + 1:
+            degrees = np.pad(degrees, (0, triples_all[:, [0, 2]].max() + 1 - len(degrees)))
+        top_k=args.top_k
+        top_entities = np.argsort(-degrees)[:top_k]
+        degree_threshold = degrees[top_entities[-1]]
+        print(f"Degree threshold để vào top {top_k}: {degree_threshold}")
+
+        entity_set = set(top_entities)
+        mask = np.array([(h in entity_set) and (t in entity_set) for h, _, t in triples_all])
+        filtered_triples = triples_all[mask]
+
+        print("Num top_k entity:", len(top_entities))
+        print("Num triple after mask:", filtered_triples.shape[0])
+
+        # Cập nhật lại triples_all cho các bước sau
+        triples_all = filtered_triples
+        n_entities = int(triples_all[:, [0, 2]].max()) + 1
+        n_relations = int(triples_all[:, 1].max()) + 1
+        print(f"KG (sau filter): {n_entities} entities, {n_relations} relations")
 
     # 3. Build adjacency list and convert to PyG Data
     adj_list = build_adj_list(triples_all, n_entities, n_relations)
@@ -224,9 +253,12 @@ def main():
     for split in args.split:
         edges = split_edge[split]
         # Lọc triple theo degree (giảm outlier)
-        heads, tails, rels = filter_triples_by_degree(
-            edges['head'], edges['tail'], edges['relation'], max_degree=500
-        )
+        # heads, tails, rels = filter_triples_by_degree(
+        #     edges['head'], edges['tail'], edges['relation'], max_degree=500
+        # )
+        # triples = np.stack([heads, tails, rels], axis=1)
+
+        heads, tails, rels = edges['head'], edges['tail'], edges['relation']
         triples = np.stack([heads, tails, rels], axis=1)
         db_path = os.path.join(args.db_root, f"lmdb_{split}")
         build_split_subgraph_parallel(
