@@ -1,27 +1,22 @@
-package:
-  name: mypkg
-  version: "0.1.0"
-
-source:
-  path: .
-build:
-  noarch: python
-
-requirements:
-  host:
-    - python
-  run:
-    - pytorch
-    - torchvision
-    - torchaudio
-    - pytorch-geometric
-    - torch-sparse
-    - torch-scatter
-    - torch-cluster
-    - torch-spline-conv
-    - scipy
-    - numpy
-    - tqdm
-    - lmdb
-    - pandas
-    - networkx
+name: myenv-cpu
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch=2.6.0
+  - torchvision
+  - torchaudio
+  - pytorch-geometric
+  - torch-sparse
+  - torch-scatter
+  - torch-cluster
+  - torch-spline-conv
+  - scipy
+  - numpy
+  - tqdm
+  - lmdb
+  - pandas
+  - networkx
+  - pip
+  - pip:
+      - git+https://github.com/phungbminh/ogb.git@master#egg=ogb
