@@ -1,5 +1,6 @@
 --find-links https://data.pyg.org/whl/torch-2.6.0+cu124.html
 torch==2.6.0+cu124
+torch_geometric
 torchvision
 torchaudio
 torch_geometric
