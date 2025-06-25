@@ -28,18 +28,19 @@ def cugraph_k_hop(G, nodes, k):
         neighbors = bfs_result['vertex'].values_host
         all_nodes.append(neighbors)
     all_nodes = np.unique(np.concatenate(all_nodes))
-    return all_nodes
+    return all_nodes.astype(np.int64)
 
 def filter_by_relation_tau(G, sub_nodes, rel, tau):
     df = G.view_edge_list()
     mask = (df['etype'] == rel) & df['src'].isin(sub_nodes)
     rel_counts = df[mask].groupby('src').size().reset_index(name='count')
     keep_nodes = rel_counts[rel_counts['count'] >= tau]['src'].values_host
-    return keep_nodes
+    return keep_nodes.astype(np.int64)
 
 def extract_cugraph_subgraph(G, node_ids):
     df = G.view_edge_list()
-    sub_edges = df[df['src'].isin(node_ids) & df['dst'].isin(node_ids)]
+    mask = df['src'].isin(node_ids) & df['dst'].isin(node_ids)
+    sub_edges = df[mask]
     old2new = {int(n): i for i, n in enumerate(node_ids)}
     src = sub_edges['src'].to_numpy()
     dst = sub_edges['dst'].to_numpy()
@@ -53,4 +54,5 @@ def extract_cugraph_subgraph(G, node_ids):
 def cugraph_shortest_dist(G, source, node_list):
     bfs_result = cugraph.bfs(G, start=int(source))
     dist_map = dict(zip(bfs_result['vertex'].values_host, bfs_result['distance'].values_host))
+    # -1 cho unreachable node (hoặc dùng 999 để mask)
     return np.array([dist_map.get(int(n), -1) for n in node_list], dtype=np.int64)
