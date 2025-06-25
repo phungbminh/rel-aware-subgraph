@@ -6,7 +6,7 @@ import numpy as np
 from tqdm import tqdm
 from ogb.linkproppred import LinkPropPredDataset
 from utils.graph_utils import ssp_multigraph_to_pyg
-from utils.cugraph_utils import build_cugraph, cugraph_shortest_dist  # Chỉ import khi cần
+from utils.cugraph_utils import build_cugraph, cugraph_shortest_dist, build_cugraph_simple
 from extraction import (
     extract_relation_aware_subgraph,         # bản CPU cũ
     extract_relation_aware_subgraph_cugraph  # bản GPU (mới)
@@ -34,13 +34,12 @@ def is_cuda_available():
 def build_graph_backend(edge_index, edge_type):
     if is_cuda_available():
         print("[INFO] CUDA detected – using cuGraph (GPU) for subgraph extraction!")
-        from utils.cugraph_utils import build_cugraph
-        G = build_cugraph(edge_index, edge_type)
-        return G, 'cugraph'
+        G_full = build_cugraph(edge_index, edge_type)
+        G_simple = build_cugraph_simple(edge_index)
+        return (G_simple, G_full), 'cugraph'
     else:
         print("[INFO] CUDA not found – using PyG (CPU) for subgraph extraction.")
         return (edge_index, edge_type), 'pyg'
-
 
 global_edge_index = None
 global_edge_type = None
@@ -67,8 +66,9 @@ def extract_for_one_worker(triple):
     h, t, r = triple
     try:
         if global_backend == 'cugraph':
+            G_simple, G_full = global_graph
             filtered_nodes, sub_edge_index, sub_edge_type, node_label = extract_relation_aware_subgraph_cugraph(
-                global_graph, int(h), int(t), int(r), global_k, global_tau
+                G_simple, G_full, int(h), int(t), int(r), global_k, global_tau
             )
         else:
             filtered_nodes, sub_edge_index, sub_edge_type, node_label = extract_relation_aware_subgraph(
@@ -86,8 +86,9 @@ def extract_for_one_worker(triple):
             else:
                 t_neg = (int(t) + 1) % global_num_nodes
             if global_backend == 'cugraph':
+                G_simple, G_full = global_graph
                 filtered_nodes_neg, sub_edge_index_neg, sub_edge_type_neg, node_label_neg = extract_relation_aware_subgraph_cugraph(
-                    global_graph, int(h), int(t_neg), int(r), global_k, global_tau
+                    G_simple, G_full, int(h), int(t_neg), int(r), global_k, global_tau
                 )
             else:
                 filtered_nodes_neg, sub_edge_index_neg, sub_edge_type_neg, node_label_neg = extract_relation_aware_subgraph(

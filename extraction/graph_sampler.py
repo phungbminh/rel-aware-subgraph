@@ -93,26 +93,22 @@ def extract_relation_aware_subgraph(edge_index, edge_type, h, t, r, num_nodes, k
     return filtered_nodes, sub_edge_index, sub_edge_type, node_label
 
 
-def extract_relation_aware_subgraph_cugraph(G, h, t, r, k, tau):
-    """
-    Extract subgraph quanh h, t, relation-aware filter, bằng cuGraph (GPU).
-    Trả về filtered_nodes, edge_index, edge_type, node_label (numpy/torch)
-    """
-    # 1. K-hop neighbors (trên GPU)
-    sub_nodes = cugraph_k_hop(G, [h, t], k)
-    # 2. Relation-aware filtering
-    filtered_nodes = filter_by_relation_tau(G, sub_nodes, r, tau)
+def extract_relation_aware_subgraph_cugraph(G_simple, G_full, h, t, r, k, tau):
+    # 1. K-hop trên G_simple
+    sub_nodes = cugraph_k_hop(G_simple, [h, t], k)
+    # 2. Lọc relation trên G_full
+    filtered_nodes = filter_by_relation_tau(G_full, sub_nodes, r, tau)
     if len(filtered_nodes) == 0:
-        # fallback: giữ node h, t để tránh lỗi rỗng
         filtered_nodes = np.array([h, t], dtype=np.int64)
-    # 3. Build subgraph + relabel node id
-    sub_edge_index, sub_edge_type, num_nodes, old2new = extract_cugraph_subgraph(G, filtered_nodes)
-    # 4. Node labeling (BFS từ h, t)
-    dist_h = cugraph_shortest_dist(G, h, filtered_nodes)
-    dist_t = cugraph_shortest_dist(G, t, filtered_nodes)
+    # 3. Subgraph edges (và relabel)
+    sub_edge_index, sub_edge_type, num_nodes, old2new = extract_cugraph_subgraph(G_full, filtered_nodes)
+    # 4. Node labeling
+    dist_h = cugraph_shortest_dist(G_simple, h, filtered_nodes)
+    dist_t = cugraph_shortest_dist(G_simple, t, filtered_nodes)
     node_label = torch.from_numpy(np.stack([dist_h, dist_t], axis=1)).long()
     filtered_nodes = torch.from_numpy(filtered_nodes).long()
     return filtered_nodes, sub_edge_index, sub_edge_type, node_label
+
 
 # def extract_relation_aware_subgraph(edge_index, edge_type, h, t, r, num_nodes, k, tau):
 #     """
