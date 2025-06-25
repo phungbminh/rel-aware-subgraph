@@ -73,8 +73,8 @@ def main():
     h = int(heads[0])
     t = int(tails[0])
     r = int(rels[0])
-    k = 1
-    tau = 1
+    k = 2
+    tau = 2
 
     filtered_nodes, sub_edge_index, sub_edge_type, node_label = extract_relation_aware_subgraph_cugraph(
         G_simple, G_full, h, t, r, k, tau
