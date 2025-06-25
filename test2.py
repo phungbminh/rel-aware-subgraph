@@ -37,20 +37,41 @@ def cugraph_shortest_dist(G, source, node_list):
 
 def extract_relation_aware_subgraph_cugraph(G_simple_r, G_full, h, t, r, k, tau):
     print(f"Try extract with h={h}, t={t}, r={r}")
-    # 1. K-hop neighbors (chỉ trên relation r)
-    sub_nodes = cugraph_k_hop(G_simple_r, [h, t], k)
+    # 1. Kiểm tra node tồn tại trong G_simple_r
+    def node_in_cugraph(G, node):
+        df = G.view_edge_list()
+        src = set(df['src'].to_pandas().tolist())
+        dst = set(df['dst'].to_pandas().tolist())
+        return (node in src) or (node in dst)
+    in_h = node_in_cugraph(G_simple_r, h)
+    in_t = node_in_cugraph(G_simple_r, t)
+    print(f"h in G_simple_r: {in_h}, t in G_simple_r: {in_t}")
+
+    if not in_h and not in_t:
+        print("Neither h nor t exists in G_simple_r: subgraph = [h, t] only.")
+        filtered_nodes = np.array([h, t], dtype=np.int64)
+        sub_edge_index = torch.empty((2, 0), dtype=torch.long)
+        sub_edge_type = torch.empty((0,), dtype=torch.long)
+        node_label = torch.zeros((2, 2), dtype=torch.long)
+        return torch.from_numpy(filtered_nodes), sub_edge_index, sub_edge_type, node_label
+
+    # 2. K-hop neighbors (chỉ trên relation r, từ node tồn tại)
+    seed_nodes = []
+    if in_h: seed_nodes.append(h)
+    if in_t: seed_nodes.append(t)
+    sub_nodes = cugraph_k_hop(G_simple_r, seed_nodes, k)
     print(f"[extract_subgraph] k_hop (relation={r}): {len(sub_nodes)} nodes")
-    # 2. Relation-aware filtering (trên G_full)
+    # 3. Relation-aware filtering (trên G_full)
     filtered_nodes = filter_by_relation_tau(G_full, sub_nodes, r, tau)
     print(f"[extract_subgraph] Filtered nodes (rel=={r}, tau>={tau}): {len(filtered_nodes)}")
     if len(filtered_nodes) == 0:
         filtered_nodes = np.array([h, t], dtype=np.int64)
-    # 3. Build subgraph & relabel
+    # 4. Build subgraph & relabel
     sub_edge_index, sub_edge_type, num_nodes, old2new = extract_cugraph_subgraph(G_full, filtered_nodes)
     print(f"[extract_subgraph] Subgraph: {sub_edge_index.shape[1]} edges")
-    # 4. Node labeling
-    dist_h = cugraph_shortest_dist(G_simple_r, h, filtered_nodes)
-    dist_t = cugraph_shortest_dist(G_simple_r, t, filtered_nodes)
+    # 5. Node labeling
+    dist_h = cugraph_shortest_dist(G_simple_r, h, filtered_nodes) if in_h else np.full(len(filtered_nodes), -1)
+    dist_t = cugraph_shortest_dist(G_simple_r, t, filtered_nodes) if in_t else np.full(len(filtered_nodes), -1)
     node_label = torch.from_numpy(np.stack([dist_h, dist_t], axis=1)).long()
     filtered_nodes = torch.from_numpy(filtered_nodes).long()
     print("[extract_subgraph] Node labeling done")
