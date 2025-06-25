@@ -3,6 +3,15 @@ import cugraph
 import cupy as cp
 import torch
 import numpy as np
+import cugraph
+
+def build_cugraph_simple(edge_index):
+    src = edge_index[0].cpu().numpy()
+    dst = edge_index[1].cpu().numpy()
+    df = cudf.DataFrame({'src': src, 'dst': dst})
+    G = cugraph.Graph()
+    G.from_cudf_edgelist(df, source='src', destination='dst')
+    return G
 
 def edge_index_to_cudf(edge_index, edge_type):
     src = edge_index[0].cpu().numpy()
