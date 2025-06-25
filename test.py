@@ -46,8 +46,17 @@ def main():
     heads = split_edge['train']['head']
     tails = split_edge['train']['tail']
     rels = split_edge['train']['relation']
-    edge_index = torch.stack([torch.cat([heads, tails]), torch.cat([tails, heads])])
-    edge_type = torch.cat([rels, rels])
+
+    # Đổi sang torch
+    heads_torch = torch.from_numpy(heads)
+    tails_torch = torch.from_numpy(tails)
+    rels_torch = torch.from_numpy(rels)
+
+    edge_index = torch.stack([
+        torch.cat([heads_torch, tails_torch]),
+        torch.cat([tails_torch, heads_torch])
+    ])
+    edge_type = torch.cat([rels_torch, rels_torch])
     # -------------------------------------------
 
     # Build cuGraph MultiGraph
