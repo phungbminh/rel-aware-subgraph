@@ -2,7 +2,7 @@ name: myenv-cpu
 channels:
   - conda-forge
 dependencies:
-  - python=3.11
+  - python=3.10
   - pytorch
   - torchvision
   - torchaudio
