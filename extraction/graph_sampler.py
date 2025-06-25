@@ -93,21 +93,46 @@ def extract_relation_aware_subgraph(edge_index, edge_type, h, t, r, num_nodes, k
     return filtered_nodes, sub_edge_index, sub_edge_type, node_label
 
 
-def extract_relation_aware_subgraph_cugraph(G_simple, G_full, h, t, r, k, tau):
+def extract_relation_aware_subgraph_cugraph(G_simple, G_full, h, t, r, k, tau, verbose=True):
+    times = {}
+    t0 = time.time()
     # 1. K-hop trên G_simple
+    t_khop_start = time.time()
     sub_nodes = cugraph_k_hop(G_simple, [h, t], k)
+    times['k_hop'] = time.time() - t_khop_start
+    if verbose:
+        print(f"[extract_subgraph] k_hop: {len(sub_nodes)} nodes (time {times['k_hop']:.3f}s)")
+
     # 2. Lọc relation trên G_full
+    t_filter = time.time()
     filtered_nodes = filter_by_relation_tau(G_full, sub_nodes, r, tau)
+    times['relation_filter'] = time.time() - t_filter
+    if verbose:
+        print(f"[extract_subgraph] Filtered nodes (rel=={r}, tau>={tau}): {len(filtered_nodes)} (time {times['relation_filter']:.3f}s)")
     if len(filtered_nodes) == 0:
         filtered_nodes = np.array([h, t], dtype=np.int64)
+
     # 3. Subgraph edges (và relabel)
+    t_subg = time.time()
     sub_edge_index, sub_edge_type, num_nodes, old2new = extract_cugraph_subgraph(G_full, filtered_nodes)
+    times['subgraph'] = time.time() - t_subg
+    if verbose:
+        print(f"[extract_subgraph] Subgraph: {sub_edge_index.shape[1]} edges (time {times['subgraph']:.3f}s)")
+
     # 4. Node labeling
+    t_label = time.time()
     dist_h = cugraph_shortest_dist(G_simple, h, filtered_nodes)
     dist_t = cugraph_shortest_dist(G_simple, t, filtered_nodes)
     node_label = torch.from_numpy(np.stack([dist_h, dist_t], axis=1)).long()
     filtered_nodes = torch.from_numpy(filtered_nodes).long()
-    return filtered_nodes, sub_edge_index, sub_edge_type, node_label
+    times['label'] = time.time() - t_label
+    if verbose:
+        print(f"[extract_subgraph] Node labeling done (time {times['label']:.3f}s)")
+
+    total = time.time() - t0
+    if verbose:
+        print(f"[extract_subgraph] TOTAL TIME: {total:.3f}s")
+    return filtered_nodes, sub_edge_index, sub_edge_type, node_label, times
 
 
 # def extract_relation_aware_subgraph(edge_index, edge_type, h, t, r, num_nodes, k, tau):
