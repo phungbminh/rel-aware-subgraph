@@ -132,7 +132,7 @@ def extract_relation_aware_subgraph_cugraph(G_simple, G_full, h, t, r, k, tau, v
     total = time.time() - t0
     if verbose:
         print(f"[extract_subgraph] TOTAL TIME: {total:.3f}s")
-    return filtered_nodes, sub_edge_index, sub_edge_type, node_label, times
+    return filtered_nodes, sub_edge_index, sub_edge_type, node_label
 
 
 # def extract_relation_aware_subgraph(edge_index, edge_type, h, t, r, num_nodes, k, tau):
