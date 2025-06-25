@@ -122,6 +122,17 @@ def build_split_subgraph_parallel(
         triples = triples[:max_links]
         print(f"Processing only {max_links} triples for split={split_name}")
 
+    # Đảm bảo set global cho worker function!
+    global global_backend, global_graph, global_edge_index, global_edge_type, global_num_nodes, global_k, global_tau, global_num_neg_samples_per_link
+    global_backend = backend
+    global_graph = graph
+    global_edge_index = edge_index
+    global_edge_type = edge_type
+    global_num_nodes = num_nodes
+    global_k = k
+    global_tau = tau
+    global_num_neg_samples_per_link = num_neg_samples_per_link
+
     if backend == "cugraph":
         # ---- CHẠY TUẦN TỰ TRÊN GPU ----
         print(f"[INFO] Using cuGraph (GPU) – run sequentially (no multiprocessing pool)")
