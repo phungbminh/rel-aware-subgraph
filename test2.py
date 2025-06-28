@@ -1,11 +1,30 @@
-import lmdb, pickle
-env = lmdb.open('./data/subgraph_db/lmdb_train', readonly=True, lock=False, max_dbs=4)
+import lmdb
+import pickle
+import os
+
+lmdb_path = "./data/subgraph_db/lmdb_train"
+env = lmdb.open(lmdb_path, readonly=True, lock=False, max_dbs=4)
 db_pos = env.open_db(b'positive')
+db_neg = env.open_db(b'negative')
+
 with env.begin(db=db_pos) as txn:
-    cursor = txn.cursor()
-    for key, value in cursor:
-        try:
-            obj = pickle.loads(value)
-            print(key, type(obj), obj)
-        except Exception as e:
-            print(f"Lỗi ở key {key}: {e}")
+    # Đếm số record
+    n = txn.stat()['entries']
+    print(f"Positive DB có {n} sample")
+
+    # Lấy 1 sample ra xem
+    for key, value in txn.cursor():
+        subgraph = pickle.loads(value)
+        print(f"Key: {key}")
+        print(f"Subgraph info: {subgraph}")
+        break  # bỏ break nếu muốn in hết
+
+with env.begin(db=db_neg) as txn:
+    n = txn.stat()['entries']
+    print(f"Negative DB có {n} sample")
+    # Lấy 1 sample ra xem
+    for key, value in txn.cursor():
+        neg_samples = pickle.loads(value)
+        print(f"Key: {key}")
+        print(f"Negative sample(s): {neg_samples}")
+        break
