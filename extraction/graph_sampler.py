@@ -22,9 +22,9 @@ def bfs_shortest_dist(edge_index, num_nodes, source):
     data = np.ones(len(row), dtype=np.float32)
     csr = csr_matrix((data, (row, col)), shape=(num_nodes, num_nodes))
     dist = shortest_path(csr, directed=False, indices=source)
-    dist = torch.from_numpy(dist).long()
-    dist[torch.isinf(dist)] = -1
-    return dist
+    dist[np.isinf(dist)] = -1
+    dist = dist.astype(np.int64)      # Đảm bảo là int64, không float
+    return torch.from_numpy(dist)
 # def bfs_shortest_dist(edge_index, start, num_nodes, max_dist=5):
 #     """
 #     BFS để tính khoảng cách từ node start đến tất cả các node khác (d(h,v) hoặc d(t,v))
@@ -57,32 +57,28 @@ def extract_relation_aware_subgraph(edge_index, edge_type, h, t, r, num_nodes, k
     - k: bán kính
     - tau: threshold relation-aware filter
     """
-    t0 = time.time()
-    # 1. K-hop subgraph quanh h và t
-    subset_h, _, _, _ = k_hop_subgraph(torch.tensor([h], dtype=torch.long), k, edge_index, relabel_nodes=False, num_nodes=num_nodes)
-    #print(f"[extract_subgraph] k_hop_subgraph(h): {len(subset_h)} nodes, time {time.time()-t0:.3f}s")
-    t1 = time.time()
-    subset_t, _, _, _ = k_hop_subgraph(torch.tensor([t], dtype=torch.long), k, edge_index, relabel_nodes=False, num_nodes=num_nodes)
-    #print(f"[extract_subgraph] k_hop_subgraph(t): {len(subset_t)} nodes, time {time.time()-t1:.3f}s")
-    t2 = time.time()
+    subset_h, _, _, _ = k_hop_subgraph(torch.tensor([h], dtype=torch.long), k, edge_index, relabel_nodes=False,
+                                       num_nodes=num_nodes)
+    subset_t, _, _, _ = k_hop_subgraph(torch.tensor([t], dtype=torch.long), k, edge_index, relabel_nodes=False,
+                                       num_nodes=num_nodes)
     subset = torch.unique(torch.cat([subset_h, subset_t]))
-    #print(f"[extract_subgraph] Union nodes: {len(subset)}")
-    # 2. Lọc node có số cạnh relation r ≥ tau
+    #print(f"[DEBUG] Triple ({h},{t},{r}): K-hop nodes = {subset.tolist()} (len={len(subset)})")
+
     mask_r = (edge_type == r)
     rel_counts = torch.zeros(num_nodes, dtype=torch.long)
     rel_counts.scatter_add_(0, edge_index[0, mask_r], torch.ones(mask_r.sum(), dtype=torch.long))
+    #print(f"[DEBUG] rel_counts[subset] = {rel_counts[subset].tolist()}")
     mask_subset = (rel_counts[subset] >= tau)
     filtered_nodes = subset[mask_subset]
+    #print(f"[DEBUG] filtered_nodes = {filtered_nodes.tolist()} (len={len(filtered_nodes)})")
 
-    if len(filtered_nodes) == 0:
-        filtered_nodes = np.array([h, t], dtype=np.int64)
-    else:
-        filtered_nodes = np.array(filtered_nodes, dtype=np.int64)
-        filtered_nodes = np.unique(np.concatenate([filtered_nodes, np.array([h, t], dtype=np.int64)]))
+    filtered_nodes = filtered_nodes[(filtered_nodes >= 0) & (filtered_nodes < num_nodes)]
+    #print("filtered_nodes safe:", filtered_nodes)
 
     # KHÔNG bỏ qua subgraph size nhỏ, chỉ cảnh báo nếu cần
-    if len(filtered_nodes) <= 1:
-        print(f"[WARNING] Subgraph size too small for triple ({h}, {t}, {r})")
+    if filtered_nodes is None or len(filtered_nodes) <= 1:
+        #print(f"[WARNING] Subgraph size too small for triple ({h}, {t}, {r}), filtered_nodes={filtered_nodes}")
+        return None
     #print(f"[extract_subgraph] Filtered nodes (rel=={r}, tau>={tau}): {len(filtered_nodes)} (time {time.time()-t2:.3f}s)")
 
     t3 = time.time()

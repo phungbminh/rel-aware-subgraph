@@ -1,35 +1,24 @@
-import lmdb
-import pickle
-import os
+import lmdb, pickle
+import numpy as np
 
-lmdb_path = "./data/subgraph_db/lmdb_train"
-env = lmdb.open(lmdb_path, readonly=True, lock=False, max_dbs=4)
+def analyze_lmdb(db_path):
+    env = lmdb.open(db_path, readonly=True, lock=False, max_dbs=2)
+    db_pos = env.open_db(b'positive')
+    with env.begin(db=db_pos) as txn:
+        cursor = txn.cursor()
+        node_counts = []
+        edge_counts = []
+        for key, value in cursor:
+            subgraph = pickle.loads(value)
+            nodes = subgraph['nodes']
+            node_counts.append(len(nodes))
+            # Nếu subgraph có lưu edges thì lấy, không thì skip
+            if 'edges' in subgraph:
+                edge_counts.append(len(subgraph['edges']))
+        print(f"Number of subgraphs: {len(node_counts)}")
+        print(f"Subgraph node count: min={min(node_counts)}, max={max(node_counts)}, mean={np.mean(node_counts):.1f}")
+        if edge_counts:
+            print(f"Subgraph edge count: min={min(edge_counts)}, max={max(edge_counts)}, mean={np.mean(edge_counts):.1f}")
 
-
-dbs = env.stat()
-print(dbs)
-
-db_pos = env.open_db(b'positive')
-db_neg = env.open_db(b'negative')
-
-with env.begin(db=db_pos) as txn:
-    # Đếm số record
-    n = txn.stat()['entries']
-    print(f"Positive DB có {n} sample")
-
-    # Lấy 1 sample ra xem
-    for key, value in txn.cursor():
-        subgraph = pickle.loads(value)
-        print(f"Key: {key}")
-        print(f"Subgraph info: {subgraph}")
-        break  # bỏ break nếu muốn in hết
-
-with env.begin(db=db_neg) as txn:
-    n = txn.stat()['entries']
-    print(f"Negative DB có {n} sample")
-    # Lấy 1 sample ra xem
-    for key, value in txn.cursor():
-        neg_samples = pickle.loads(value)
-        print(f"Key: {key}")
-        print(f"Negative sample(s): {neg_samples}")
-        break
+# Example:
+analyze_lmdb('./data/subgraph_db/lmdb_train')

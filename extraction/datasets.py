@@ -56,55 +56,50 @@ class SubgraphDataset(Dataset):
         return num_pos
 
     def __getitem__(self, idx):
-        """
-        Trả về:
-            pos_data: Data (subgraph positive)
-            g_label: tensor
-            r_label: tensor
-            neg_data_list: List[Data]
-            neg_g_labels: List[tensor]
-            neg_r_labels: List[tensor]
-        """
         with self.main_env.begin() as txn:
             key = str(idx).encode()
             data_pos = txn.get(key, db=self.db_pos)
             if data_pos is None:
                 raise IndexError(f"Key {key} not found in positive DB")
-            pos_dict = pickle.loads(data_pos)  # hoặc deserialize(data_pos)
+            pos_dict = pickle.loads(data_pos)
 
             data_neg = txn.get(key, db=self.db_neg)
             if data_neg is None:
                 raise IndexError(f"Key {key} not found in negative DB")
-            neg_list = pickle.loads(data_neg)  # Đây là list các negative dict
+            neg_list = pickle.loads(data_neg)
 
-            # Debug print:
-            print("DEBUG pos_dict:", type(pos_dict), pos_dict)
-            print("DEBUG neg_list:", type(neg_list), neg_list if isinstance(neg_list, list) else neg_list)
-        # Tạo subgraph positive bằng relation-aware extraction
         h, t, r = pos_dict['h'], pos_dict['t'], pos_dict['r_label']
-        filtered_nodes, sub_edge_index, sub_edge_type, node_label = extract_relation_aware_subgraph(
+        pos_result = extract_relation_aware_subgraph(
             self.graph.edge_index, self.graph.edge_type, h, t, r,
             num_nodes=self.graph.num_nodes, k=2, tau=2
         )
+        if pos_result is None:
+            # Có thể raise hoặc skip sample này (raise sẽ báo lỗi ngay, skip cần logic ở DataLoader)
+            raise ValueError(f"extract_relation_aware_subgraph trả về None ở idx={idx}, triple=({h}, {r}, {t})")
+        filtered_nodes, sub_edge_index, sub_edge_type, node_label = pos_result
+
         from torch_geometric.data import Data
-        # Node features (label + relation embedding) sẽ thêm ở bước DataLoader/Model
         pos_data = Data(
             edge_index=sub_edge_index,
             edge_type=sub_edge_type,
             num_nodes=filtered_nodes.size(0),
-            node_label=node_label,  # (N, 2)
-            h_idx=(filtered_nodes == h).nonzero(as_tuple=True)[0][0],   # chỉ số node h trong subgraph
-            t_idx=(filtered_nodes == t).nonzero(as_tuple=True)[0][0],   # chỉ số node t trong subgraph
+            node_label=node_label,
+            h_idx=(filtered_nodes == h).nonzero(as_tuple=True)[0][0],
+            t_idx=(filtered_nodes == t).nonzero(as_tuple=True)[0][0],
         )
 
         # Negative samples
         neg_data_list, neg_g_labels, neg_r_labels = [], [], []
         for neg_dict in neg_list:
             h_neg, t_neg, r_neg = neg_dict['h'], neg_dict['t'], neg_dict['r_label']
-            filtered_nodes_neg, sub_edge_index_neg, sub_edge_type_neg, node_label_neg = extract_relation_aware_subgraph(
+            neg_result = extract_relation_aware_subgraph(
                 self.graph.edge_index, self.graph.edge_type, h_neg, t_neg, r_neg,
                 num_nodes=self.graph.num_nodes, k=2, tau=2
             )
+            if neg_result is None:
+                print(f"[WARNING] Negative sample None idx={idx}, triple=({h_neg}, {r_neg}, {t_neg})")
+                continue
+            filtered_nodes_neg, sub_edge_index_neg, sub_edge_type_neg, node_label_neg = neg_result
             neg_data = Data(
                 edge_index=sub_edge_index_neg,
                 edge_type=sub_edge_type_neg,
