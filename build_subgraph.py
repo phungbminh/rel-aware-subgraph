@@ -257,17 +257,17 @@ def main():
     # 4. Chọn backend (CPU/GPU)
     graph, backend = build_graph_backend(edge_index, edge_type, args.backend)
 
-    # 5. Build subgraph cho từng split
+    nodes_in_use = set(triples_all[:, 0]).union(triples_all[:, 2])
+
     for split in args.split:
         edges = split_edge[split]
-        # Lọc triple theo degree (giảm outlier)
-        # heads, tails, rels = filter_triples_by_degree(
-        #     edges['head'], edges['tail'], edges['relation'], max_degree=500
-        # )
-        # triples = np.stack([heads, tails, rels], axis=1)
-
         heads, tails, rels = edges['head'], edges['tail'], edges['relation']
         triples = np.stack([heads, tails, rels], axis=1)
+
+        # Lọc triple cho đúng tập node đã chọn
+        mask = np.array([(h in nodes_in_use) and (t in nodes_in_use) for h, _, t in triples])
+        triples = triples[mask]
+
         db_path = os.path.join(args.db_root, f"lmdb_{split}")
         build_split_subgraph_parallel(
             split_name=split,
@@ -284,6 +284,5 @@ def main():
             backend=backend,
             graph=graph
         )
-
 if __name__ == "__main__":
     main()
