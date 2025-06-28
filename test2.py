@@ -4,6 +4,11 @@ import os
 
 lmdb_path = "./data/subgraph_db/lmdb_train"
 env = lmdb.open(lmdb_path, readonly=True, lock=False, max_dbs=4)
+
+
+dbs = env.stat()
+print(dbs)
+
 db_pos = env.open_db(b'positive')
 db_neg = env.open_db(b'negative')
 
