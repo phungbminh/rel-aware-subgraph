@@ -3,10 +3,10 @@ channels:
   - conda-forge
 dependencies:
   - python=3.10
-  - pytorch
+  - torch
   - torchvision
   - torchaudio
-  - pytorch-geometric
+  - torch-geometric
   - torch-sparse
   - torch-scatter
   - torch-cluster
