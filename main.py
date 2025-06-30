@@ -110,6 +110,8 @@ def get_args():
                         help="Random seed")
     parser.add_argument("--save-model", action="store_true",
                         help="Save best model checkpoint")
+    parser.add_argument("--is-debug", action="store_true",
+                        help="Enable debug mode for verbose output")
 
     return parser.parse_args()
 
@@ -218,7 +220,7 @@ def main():
         patience=args.patience,
         num_workers=args.num_workers,
         checkpoint_path=checkpoint_path,
-        is_debug=True
+        is_debug=args.is_debug
     )
 
     # ===== Báo cáo kết quả =====
