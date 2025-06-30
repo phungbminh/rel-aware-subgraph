@@ -81,7 +81,7 @@ class CompGCNConv(MessagePassing):
         return F.leaky_relu(out, 0.1)
 
 class AttentionPooling(nn.Module):
-    """Multi-head attention pooling cho subgraph-level readout."""
+    """Multi-head attention pooling cho subgraph-level readout, hỗ trợ multi-graph PyG batch."""
     def __init__(self, in_dim, att_dim=64, heads=4, dropout=0.1):
         super().__init__()
         self.heads = heads
@@ -93,18 +93,38 @@ class AttentionPooling(nn.Module):
         nn.init.xavier_uniform_(self.proj.weight)
         nn.init.normal_(self.query)
 
-    def forward(self, x, mask=None):
-        # x: (N, in_dim)
-        if x.size(0) == 0:
-            return torch.zeros(1, self.heads * self.att_dim, device=x.device)
-        keys = self.proj(x).view(-1, self.heads, self.att_dim)  # (N, heads, att_dim)
-        att = (keys * self.query).sum(-1).transpose(0, 1)       # (heads, N)
-        if mask is not None:
-            att = att.masked_fill(~mask.unsqueeze(0), float('-inf'))
-        att = F.softmax(att, dim=1)
-        att = self.dropout(att)
-        pooled = torch.einsum('hn,hnd->hd', att, keys)          # (heads, att_dim)
-        return self.norm(pooled.view(1, -1))                    # (1, heads * att_dim)
+    def forward(self, x, batch):
+        """
+        x: (N, in_dim)
+        batch: (N,) graph index cho mỗi node (chuẩn PyG)
+        Return: (B, heads*att_dim)   (B = số graph)
+        """
+        N = x.size(0)
+        keys = self.proj(x).view(N, self.heads, self.att_dim)  # (N, heads, att_dim)
+        # Đưa keys về (heads, N, att_dim) cho tiện tính toán
+        keys_h = keys.transpose(0, 1)  # (heads, N, att_dim)
+        query = self.query             # (1, heads, att_dim)
+        att = (keys_h * query).sum(-1) # (heads, N)
+        att = att.transpose(0, 1)      # (N, heads)
+
+        # Group attention theo graph (dùng scatter softmax từng graph)
+        from torch_scatter import scatter_softmax, scatter_sum
+
+        # Chuẩn hóa attention cho từng graph riêng biệt trên mỗi head
+        attn_scores = []
+        pooled_outs = []
+        for h in range(self.heads):
+            # (N,)
+            att_h = att[:, h]
+            attn_h = scatter_softmax(att_h, batch)
+            attn_h = self.dropout(attn_h)
+            # Weighted sum trên từng graph
+            key_h = keys[:, h, :]         # (N, att_dim)
+            pooled = scatter_sum(attn_h.unsqueeze(-1) * key_h, batch, dim=0)  # (num_graph, att_dim)
+            pooled_outs.append(pooled)
+        # Kết quả: [heads, num_graph, att_dim] -> (num_graph, heads*att_dim)
+        pooled_cat = torch.cat(pooled_outs, dim=-1)
+        return self.norm(pooled_cat)
 
 class RASG(nn.Module):
     """
@@ -159,7 +179,8 @@ class RASG(nn.Module):
 
         # Attention pooling: mask = all ones (hoặc mask head/tail tuỳ chọn)
         mask = torch.ones(h.size(0), dtype=torch.bool, device=h.device)
-        z_graph = self.att_pool(h, mask=mask)          # (1, pool_dim)
+        #z_graph = self.att_pool(h, mask=mask)          # (1, pool_dim)
+        z_graph = self.att_pool(h, data.batch)
 
         # Collect head/tail indices cho từng graph (giả sử đã padding -1 nếu không có)
         # Chú ý: Nếu batch, head_idx/tail_idx là (B,), lấy h[head_idx], h[tail_idx]
