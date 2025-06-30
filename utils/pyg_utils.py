@@ -3,7 +3,7 @@ from torch_geometric.data import Batch
 from torch_geometric.data import Batch, Data
 
 def collate_pyg(batch):
-    print(f"[DEBUG][collate_pyg] Batch size: {len(batch)}")
+    #print(f"[DEBUG][collate_pyg] Batch size: {len(batch)}")
 
     pos_graphs = []
     neg_graphs_list = []
