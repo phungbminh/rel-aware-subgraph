@@ -54,10 +54,11 @@ def train_one_epoch(model, loader, optimizer, device, margin=1.0, max_grad_norm=
 
         if step == 0 or is_debug:
             print("[DEBUG][check] Model device:", next(model.parameters()).device)
-            print("[DEBUG][check] batch_all device:", batch_all.device)
-            print("[DEBUG][check] batch_r device:", batch_r.device)
             if hasattr(batch_all, 'x'):
                 print("[DEBUG][check] batch_all.x device:", batch_all.x.device)
+            if hasattr(batch_all, 'edge_index'):
+                print("[DEBUG][check] batch_all.edge_index device:", batch_all.edge_index.device)
+            print("[DEBUG][check] batch_r device:", batch_r.device)
 
         if is_debug:
             print(f"[DEBUG][train_one_epoch] batch_all: {batch_all.x.shape if hasattr(batch_all, 'x') else None}, batch_r: {batch_r.shape}, batch_size: {batch_size}, num_negs: {num_negs}")
