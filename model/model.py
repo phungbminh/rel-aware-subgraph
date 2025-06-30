@@ -161,7 +161,15 @@ class RASG(nn.Module):
         if rel_ids.dim() == 0:
             rel_ids = rel_ids.expand(data.num_graphs)
         node2graph = data.batch if hasattr(data, 'batch') else torch.zeros(x.size(0), dtype=torch.long, device=x.device)
-        rel_feat = self.rel_emb(rel_ids[node2graph]) # (N, rel_emb_dim)
+        #rel_feat = self.rel_emb(rel_ids[node2graph]) # (N, rel_emb_dim)
+        rel_input = rel_ids[node2graph]
+        if torch.any(rel_input < 0) or torch.any(rel_input >= self.rel_emb.emb.num_embeddings):
+            print("[ERROR] Invalid rel_ids in RASG.forward")
+            print("min =", rel_input.min().item(), "max =", rel_input.max().item())
+            print("Embedding size =", self.rel_emb.emb.num_embeddings)
+            raise ValueError("rel_ids out of embedding range")
+        rel_feat = self.rel_emb(rel_input)
+
         h = torch.cat([x, rel_feat], dim=-1)         # (N, in_dim)
         edge_emb = self.rel_emb(data.edge_attr) if hasattr(data, 'edge_attr') and data.edge_attr is not None else None
 
