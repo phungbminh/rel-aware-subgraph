@@ -238,6 +238,7 @@ def parallel_extraction(
 
 # ======= Lưu mapping file + metadata ===========
 def save_mappings(output_dir, all_triples, args, split_sizes):
+    output_dir = output_dir + "/mappings"
     os.makedirs(output_dir + "/mappings", exist_ok=True)
     entity_set = set(all_triples[:,0]) | set(all_triples[:,2])
     relation_set = set(all_triples[:,1])
