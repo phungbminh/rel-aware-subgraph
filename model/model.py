@@ -100,30 +100,19 @@ class AttentionPooling(nn.Module):
         Return: (B, heads*att_dim)   (B = số graph)
         """
         N = x.size(0)
-        keys = self.proj(x).view(N, self.heads, self.att_dim)  # (N, heads, att_dim)
-        # Đưa keys về (heads, N, att_dim) cho tiện tính toán
-        keys_h = keys.transpose(0, 1)  # (heads, N, att_dim)
-        query = self.query             # (1, heads, att_dim)
-        att = (keys_h * query).sum(-1) # (heads, N)
-        att = att.transpose(0, 1)      # (N, heads)
-
-        # Group attention theo graph (dùng scatter softmax từng graph)
+        keys = self.proj(x).view(N, self.heads, self.att_dim)        # (N, heads, att_dim)
+        att = (keys * self.query).sum(-1)                            # (N, heads)
         from torch_scatter import scatter_softmax, scatter_sum
 
-        # Chuẩn hóa attention cho từng graph riêng biệt trên mỗi head
-        attn_scores = []
         pooled_outs = []
         for h in range(self.heads):
-            # (N,)
             att_h = att[:, h]
-            attn_h = scatter_softmax(att_h, batch)
+            attn_h = scatter_softmax(att_h, batch)                   # (N,)
             attn_h = self.dropout(attn_h)
-            # Weighted sum trên từng graph
-            key_h = keys[:, h, :]         # (N, att_dim)
+            key_h = keys[:, h, :]                                    # (N, att_dim)
             pooled = scatter_sum(attn_h.unsqueeze(-1) * key_h, batch, dim=0)  # (num_graph, att_dim)
             pooled_outs.append(pooled)
-        # Kết quả: [heads, num_graph, att_dim] -> (num_graph, heads*att_dim)
-        pooled_cat = torch.cat(pooled_outs, dim=-1)
+        pooled_cat = torch.cat(pooled_outs, dim=-1)                  # (num_graph, heads*att_dim)
         return self.norm(pooled_cat)
 
 class RASG(nn.Module):
