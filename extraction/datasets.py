@@ -71,6 +71,7 @@ class SubGraphDataset(Dataset):
         return len(self.keys)
 
     def __getitem__(self, idx):
+        print(f"[DEBUG][Dataset] __getitem__ idx={idx}")
         # Check cache trước
         if idx in self.cache:
             item = self.cache.pop(idx)

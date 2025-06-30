@@ -11,6 +11,8 @@ def create_mega_batch(pos_graphs, relations, negatives_list, is_debug=False):
     """
     Gộp positive và negative vào một batch PyG lớn, vectorized.
     """
+    print(f"[DEBUG][create_mega_batch] len(pos_graphs): {len(pos_graphs)}, len(negatives_list): {len(negatives_list)}")
+
     if is_debug:
         print("[DEBUG][create_mega_batch] Number of pos_graphs:", len(pos_graphs))
         print("[DEBUG][create_mega_batch] Number of negatives per pos:", len(negatives_list[0]) if negatives_list else 0)
@@ -118,7 +120,7 @@ def run_training(
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=False,
         **loader_kwargs
     )
     valid_loader = DataLoader(

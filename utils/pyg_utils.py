@@ -3,11 +3,8 @@ from torch_geometric.data import Batch
 from torch_geometric.data import Batch, Data
 
 def collate_pyg(batch):
-    is_debug = hasattr(batch[0], 'is_debug') and batch[0].is_debug if batch else False
-    if is_debug:
-        print(f"[DEBUG][Collate] Batch size: {len(batch)}")
-        for i, item in enumerate(batch):
-            print(f"  [DEBUG] Item {i}: graph={type(item['graph'])}, neg_graphs={len(item['neg_graphs'])}")
+    print(f"[DEBUG][collate_pyg] Batch size: {len(batch)}")
+
     pos_graphs = []
     neg_graphs_list = []
     relations = []
@@ -19,8 +16,7 @@ def collate_pyg(batch):
         if len(negs) < max_num_negs:
             negs = negs + [Data()] * (max_num_negs - len(negs))
         neg_graphs_list.append(negs)
-    if is_debug:
-        print(f"[DEBUG][Collate] max_num_negs: {max_num_negs}")
+
     return pos_graphs, relations, neg_graphs_list, max_num_negs
 
 
