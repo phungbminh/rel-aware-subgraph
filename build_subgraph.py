@@ -3,380 +3,368 @@ import os
 import lmdb
 import pickle
 import numpy as np
-import torch
+import time
+import json
 from tqdm import tqdm
-from ogb.linkproppred import LinkPropPredDataset
-from scipy.sparse import csr_matrix
-from collections import Counter
-
-from utils.graph_utils import ssp_multigraph_to_pyg
-from utils.cugraph_utils import (
-    build_cugraph, cugraph_shortest_dist, build_cugraph_simple, filter_triples_by_degree
-)
-from extraction import (
-    extract_relation_aware_subgraph,         # CPU
-    extract_relation_aware_subgraph_cugraph  # GPU
-)
+import logging
 import multiprocessing as mp
-from typing import Any, Tuple, List, Optional
-import networkx as nx
-import matplotlib.pyplot as plt
+from queue import Empty
+from ogb.linkproppred import LinkPropPredDataset
+from scipy import sparse
+from numba import njit, prange
 
-# ======== Worker-global variables for multiprocessing ========
-global_edge_index = None
-global_edge_type = None
-global_num_nodes = None
-global_k = None
-global_tau = None
-global_num_neg_samples_per_link = None
-global_backend = None
-global_graph = None
-
-def _init_worker(
-    edge_index, edge_type, num_nodes, k, tau, num_neg_samples_per_link, backend, graph
-):
-    """Initializer for multiprocessing workers."""
-    global global_edge_index, global_edge_type, global_num_nodes
-    global global_k, global_tau, global_num_neg_samples_per_link
-    global global_backend, global_graph
-    global_edge_index = edge_index
-    global_edge_type = edge_type
-    global_num_nodes = num_nodes
-    global_k = k
-    global_tau = tau
-    global_num_neg_samples_per_link = num_neg_samples_per_link
-    global_backend = backend
-    global_graph = graph
-
-def extract_for_one_worker(triple: Tuple[int, int, int]) -> Optional[Tuple[dict, List[dict]]]:
-    """Extracts subgraph for a single triple (positive + negatives)."""
-    h, t, r = triple
-    try:
-        if global_backend == 'cugraph':
-            G_simple, G_full = global_graph
-            filtered_nodes, _, _, _ = extract_relation_aware_subgraph_cugraph(
-                G_simple, G_full, int(h), int(t), int(r), global_k, global_tau
-            )
-        else:
-            filtered_nodes, _, _, _ = extract_relation_aware_subgraph(
-                global_edge_index, global_edge_type, int(h), int(t), int(r),
-                global_num_nodes, global_k, global_tau
-            )
-        # Chỉ skip nếu subgraph None, không skip nếu nhỏ
-        if filtered_nodes is None:
-            #print(f"Skip triple ({h},{t},{r}) - subgraph is None")
-            return None
-
-        print(f"Triple ({h},{t},{r}): subgraph size {len(filtered_nodes)}")
-
-        subgraph_data = {
-            'h': int(h), 't': int(t), 'r_label': int(r), 'g_label': 1, 'nodes': filtered_nodes.tolist()
+# ======= Logger chuẩn hóa ===========
+def setup_logger(output_dir: str):
+    logger = logging.getLogger('subgraph_extraction')
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+    fh = logging.FileHandler(os.path.join(output_dir, 'extraction.log'))
+    fh.setFormatter(formatter)
+    class ColorFormatter(logging.Formatter):
+        COLORS = {
+            logging.INFO: '\033[94m',
+            logging.WARNING: '\033[93m',
+            logging.ERROR: '\033[91m',
+            logging.CRITICAL: '\033[95m'
         }
+        RESET = '\033[0m'
+        def format(self, record):
+            msg = super().format(record)
+            return f"{self.COLORS.get(record.levelno, '')}{msg}{self.RESET}"
+    ch = logging.StreamHandler()
+    ch.setFormatter(ColorFormatter('%(asctime)s - %(message)s'))
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+    return logger
 
-        # --- Negative sampling ---
-        neg_samples = []
-        for _ in range(global_num_neg_samples_per_link):
-            # Try 10 times for a different tail
-            for _ in range(10):
-                t_neg = np.random.randint(0, global_num_nodes)
-                if t_neg != t:
-                    break
-            else:
-                t_neg = (int(t) + 1) % global_num_nodes
-            if global_backend == 'cugraph':
-                filtered_nodes_neg, _, _, _ = extract_relation_aware_subgraph_cugraph(
-                    G_simple, G_full, int(h), int(t_neg), int(r), global_k, global_tau
-                )
-            else:
-                filtered_nodes_neg, _, _, _ = extract_relation_aware_subgraph(
-                    global_edge_index, global_edge_type, int(h), int(t_neg), int(r),
-                    global_num_nodes, global_k, global_tau
-                )
-            # Nếu negative None, vẫn cho vào sample (hoặc skip cũng được)
-            if filtered_nodes_neg is None:
-                print(f"  Negative sample ({h},{t_neg},{r}) is None")
-                continue
-            neg_data = {
-                'h': int(h), 't': int(t_neg), 'r_label': int(r),
-                'g_label': 0, 'nodes': filtered_nodes_neg.tolist()
-            }
-            neg_samples.append(neg_data)
-        return subgraph_data, neg_samples
+
+# ======= BFS song song với Numba ===========
+@njit(nogil=True)
+def numba_bfs(adj_indptr, adj_indices, start, max_hops):
+    num_nodes = adj_indptr.shape[0] - 1
+    distances = np.full(num_nodes, 127, dtype=np.int8)
+    queue = np.empty(num_nodes, dtype=np.int32)
+    start_ptr, end_ptr = 0, 0
+    queue[end_ptr] = start
+    end_ptr += 1
+    distances[start] = 0
+    while start_ptr < end_ptr:
+        current = queue[start_ptr]
+        start_ptr += 1
+        current_dist = distances[current]
+        if current_dist < max_hops:
+            for idx in range(adj_indptr[current], adj_indptr[current + 1]):
+                neighbor = adj_indices[idx]
+                if distances[neighbor] > current_dist + 1:
+                    distances[neighbor] = current_dist + 1
+                    queue[end_ptr] = neighbor
+                    end_ptr += 1
+    return distances
+
+@njit(nogil=True, parallel=True)
+def batch_bfs(adj_indptr, adj_indices, start_nodes, max_hops):
+    num_nodes = adj_indptr.shape[0] - 1
+    num_starts = len(start_nodes)
+    dist_matrix = np.full((num_starts, num_nodes), 127, dtype=np.int8)
+    for i in prange(num_starts):
+        dist_matrix[i] = numba_bfs(adj_indptr, adj_indices, start_nodes[i], max_hops)
+    return dist_matrix
+
+# ======= Tính bậc quan hệ dạng sparse ===========
+def compute_relation_degree_sparse(triples, num_nodes, num_relations):
+    """Sparse matrix: node x relation (degree count)"""
+    rows = np.concatenate([triples[:, 0], triples[:, 2]])
+    cols = np.concatenate([triples[:, 1], triples[:, 1]])
+    data = np.ones(2 * len(triples), dtype=np.int32)
+    rel_degree = sparse.coo_matrix((data, (rows, cols)), shape=(num_nodes, num_relations), dtype=np.int32).tocsr()
+    return rel_degree
+
+# ======= WorkerContext chứa graph, degree, param ===========
+class WorkerContext:
+    __slots__ = ('csr_graph', 'rel_degree', 'rel_degree_dense', 'use_dense', 'k', 'tau')
+    def __init__(self, csr_graph, rel_degree, rel_degree_dense, use_dense, k, tau):
+        self.csr_graph = csr_graph
+        self.rel_degree = rel_degree
+        self.rel_degree_dense = rel_degree_dense
+        self.use_dense = use_dense
+        self.k = k
+        self.tau = tau
+
+# ======= Trích xuất subgraph từng batch, dùng getcol nhanh ===========
+def extract_batch_subgraphs(triples_batch, ctx: WorkerContext):
+    """Trích xuất subgraph k-hop cho từng triple. Truy vấn rel_degree theo cột (r), cực nhanh."""
+    sources = triples_batch[:, 0].astype(np.int32)
+    targets = triples_batch[:, 2].astype(np.int32)
+    relations = triples_batch[:, 1].astype(np.int32)
+    if sources.max() >= ctx.csr_graph.num_nodes or targets.max() >= ctx.csr_graph.num_nodes:
+        raise ValueError("Node index out of bound in batch")
+    src_dists = batch_bfs(ctx.csr_graph.indptr, ctx.csr_graph.indices, sources, ctx.k)
+    tgt_dists = batch_bfs(ctx.csr_graph.indptr, ctx.csr_graph.indices, targets, ctx.k)
+    results = []
+    for i in range(len(triples_batch)):
+        h, r, t = sources[i], relations[i], targets[i]
+        in_range = (src_dists[i] <= ctx.k) | (tgt_dists[i] <= ctx.k)
+        candidate_nodes = np.where(in_range)[0]
+        if ctx.use_dense:
+            # Dùng dense matrix (cực nhanh, tốn RAM nếu graph lớn)
+            rel_counts = ctx.rel_degree_dense[candidate_nodes, r]
+        else:
+            # Dùng getcol để truy vấn cột (nhanh hơn nhiều so với getrow)
+            col_r = ctx.rel_degree.getcol(r).toarray().ravel()
+            rel_counts = col_r[candidate_nodes]
+        valid_mask = rel_counts >= ctx.tau
+        if not np.any(valid_mask):
+            valid_mask = rel_counts > 0
+        filtered_nodes = candidate_nodes[valid_mask]
+        results.append({
+            'triple': (int(h), int(r), int(t)),
+            'nodes': filtered_nodes.tolist(),
+            's_dist': src_dists[i, filtered_nodes].tolist(),
+            't_dist': tgt_dists[i, filtered_nodes].tolist()
+        })
+    return results
+
+def process_batch(args):
+    idx, batch, ctx = args
+    try:
+        res = extract_batch_subgraphs(batch, ctx)
+        return idx, res
     except Exception as e:
-        print(f"[WARNING] Skip triple ({h},{t},{r}) with error: {e}")
-        return None
+        # Không crash toàn bộ pipeline nếu 1 batch lỗi
+        return idx, [{"error": str(e), "batch_idx": idx}]
 
-def build_graph_backend(edge_index: torch.Tensor, edge_type: torch.Tensor, backend: str):
-    """Khởi tạo backend (PyG hoặc cuGraph) tùy chọn."""
-    if backend == "cugraph":
-        print("[INFO] Using cuGraph (GPU) for subgraph extraction!")
-        G_full = build_cugraph(edge_index, edge_type)
-        G_simple = build_cugraph_simple(edge_index)
-        return (G_simple, G_full), "cugraph"
-    else:
-        print("[INFO] Using PyG (CPU) for subgraph extraction.")
-        return (edge_index, edge_type), "pyg"
+# ======= Negative sampling: batch-wise, memory safe ===========
+def negative_sample_batches(positive_triples, num_negatives, num_nodes, batch_size):
+    """Sinh negatives từng batch nhỏ, memory safe"""
+    n_pos = len(positive_triples)
+    n_batches = (n_pos + batch_size - 1) // batch_size
+    for i in range(n_batches):
+        batch = positive_triples[i*batch_size : (i+1)*batch_size]
+        negatives = []
+        for h, r, t in batch:
+            for _ in range(num_negatives):
+                # Tail negative
+                t_neg = np.random.randint(0, num_nodes)
+                while t_neg == t:
+                    t_neg = np.random.randint(0, num_nodes)
+                negatives.append([h, r, t_neg])
+                # Head negative
+                h_neg = np.random.randint(0, num_nodes)
+                while h_neg == h:
+                    h_neg = np.random.randint(0, num_nodes)
+                negatives.append([h_neg, r, t])
+        yield np.array(negatives, dtype=np.int32)
 
-def build_split_subgraph_parallel(
-    split_name: str, triples: np.ndarray, edge_index: torch.Tensor, edge_type: torch.Tensor,
-    num_nodes: int, db_path: str, num_neg_samples_per_link: int = 1, k: int = 2, tau: int = 2,
-    map_size: int = int(2e10), num_workers: int = 4, max_links: Optional[int] = None,
-    backend: str = "pyg", graph: Any = None
+# ======= Async writer: log đầy đủ, close queue chuẩn ===========
+def async_writer(queue, output_path, total_items, logger, progress_key=b'_progress'):
+    env = lmdb.open(output_path, map_size=1024 ** 4, max_dbs=1)
+    db = env.open_db()
+    with env.begin(write=True, db=db) as txn:
+        value = txn.get(progress_key)
+        if value == b'COMPLETED':
+            logger.info("Database already marked as COMPLETED. Nothing to do.")
+            count = total_items
+        elif value is not None:
+            try:
+                count = int(value)
+                logger.info(f"Resuming from item {count}")
+            except Exception:
+                logger.warning(f"Progress key exists but value is not an integer: {value}")
+                count = 0
+        else:
+            count = 0
+        while count < total_items:
+            try:
+                key, data = queue.get(timeout=30)
+                txn.put(key, pickle.dumps(data))
+                count += 1
+                if count % 1000 == 0:
+                    txn.put(progress_key, str(count).encode())
+                    txn.commit()
+                    txn = env.begin(write=True, db=db)
+            except Empty:
+                if count >= total_items:
+                    break
+            except Exception as e:
+                logger.error(f"Writer error: {str(e)}")
+                break
+    with env.begin(write=True, db=db) as txn:
+        txn.put(progress_key, b'COMPLETED')
+    logger.info(f"Writer process finished for {output_path}.")
+    env.close()
+
+# ======= parallel_extraction: log mỗi vài batch, close queue ===========
+def parallel_extraction(
+        triples: np.ndarray,
+        csr_graph: CSRGraph,
+        rel_degree: sparse.csr_matrix,
+        rel_degree_dense: np.ndarray,
+        use_dense: bool,
+        k: int,
+        tau: int,
+        num_workers: int,
+        output_path: str,
+        batch_size: int = 1000,
+        logger: logging.Logger = None
 ):
-    """Sinh subgraph cho từng triple (song song hoặc tuần tự tùy backend), lưu ra LMDB."""
-    print(f"Split {split_name}: {triples.shape[0]} triples after filtering")
-    if not os.path.exists(db_path):
-        os.makedirs(db_path)
-    env = lmdb.open(db_path, map_size=map_size, max_dbs=4, lock=False)
-    db_pos = env.open_db(b'positive')
-    db_neg = env.open_db(b'negative')
+    ctx = WorkerContext(csr_graph, rel_degree, rel_degree_dense, use_dense, k, tau)
+    num_batches = (len(triples) + batch_size - 1) // batch_size
+    batches = [
+        (i, triples[i * batch_size: (i + 1) * batch_size], ctx)
+        for i in range(num_batches)
+    ]
+    writer_queue = mp.Queue(maxsize=10000)
+    writer_process = mp.Process(
+        target=async_writer,
+        args=(writer_queue, output_path, len(triples), logger)
+    )
+    writer_process.start()
+    completed = 0
+    start_time = time.time()
+    with mp.Pool(num_workers) as pool:
+        results = pool.imap_unordered(process_batch, batches)
+        with tqdm(total=len(triples), desc="Extracting subgraphs") as pbar:
+            for idx, batch_results in results:
+                for j, res in enumerate(batch_results):
+                    global_idx = idx * batch_size + j
+                    writer_queue.put((f"{global_idx:010d}".encode(), res))
+                completed += len(batch_results)
+                pbar.update(len(batch_results))
+                if logger and (idx % 2 == 0 or idx == num_batches-1):  # Log mỗi 2 batch
+                    elapsed = time.time() - start_time
+                    speed = completed / elapsed if elapsed > 0 else 0
+                    logger.info(f"Processed batch {idx}/{num_batches} - Speed: {speed:.2f} triples/sec")
+    writer_queue.close()
+    writer_process.join()
+    return completed
 
-    if max_links is not None:
-        triples = triples[:max_links]
-        print(f"Processing only {max_links} triples for split={split_name}")
+# ======= Lưu mapping file + metadata ===========
+def save_mappings(output_dir, all_triples, args, split_sizes):
+    os.makedirs(output_dir + "/mappings", exist_ok=True)
+    entity_set = set(all_triples[:,0]) | set(all_triples[:,2])
+    relation_set = set(all_triples[:,1])
+    entity2id = {eid: i for i, eid in enumerate(sorted(entity_set))}
+    relation2id = {rid: i for i, rid in enumerate(sorted(relation_set))}
+    id2entity = {i: eid for eid, i in entity2id.items()}
+    id2relation = {i: rid for rid, i in relation2id.items()}
+    with open(os.path.join(output_dir, "entity2id.pkl"), "wb") as f:
+        pickle.dump(entity2id, f)
+    with open(os.path.join(output_dir, "relation2id.pkl"), "wb") as f:
+        pickle.dump(relation2id, f)
+    with open(os.path.join(output_dir, "id2entity.pkl"), "wb") as f:
+        pickle.dump(id2entity, f)
+    with open(os.path.join(output_dir, "id2relation.pkl"), "wb") as f:
+        pickle.dump(id2relation, f)
+    metadata = {
+        "num_entities": len(entity2id),
+        "num_relations": len(relation2id),
+        "created_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "args": vars(args),
+        "split_sizes": split_sizes,
+    }
+    with open(os.path.join(output_dir, "metadata.json"), "w") as f:
+        json.dump(metadata, f, indent=2)
+    print(f"Saved mapping and metadata files to {output_dir}")
 
-    # Set global cho worker (trường hợp multiprocessing)
-    global global_backend, global_graph, global_edge_index, global_edge_type, global_num_nodes, global_k, global_tau, global_num_neg_samples_per_link
-    global_backend = backend
-    global_graph = graph
-    global_edge_index = edge_index
-    global_edge_type = edge_type
-    global_num_nodes = num_nodes
-    global_k = k
-    global_tau = tau
-    global_num_neg_samples_per_link = num_neg_samples_per_link
 
-    if backend == "cugraph":
-        print(f"[INFO] Using cuGraph (GPU) – run sequentially (no multiprocessing pool)")
-        with env.begin(write=True) as txn:
-            for idx, triple in tqdm(
-                enumerate(triples), total=len(triples), desc=f"Build {split_name} subgraphs"
-            ):
-                result = extract_for_one_worker(triple)
-                if result is None:
-                    continue
-                subgraph_data, neg_samples = result
-                txn.put(str(idx).encode(), pickle.dumps(subgraph_data), db=db_pos)
-                txn.put(str(idx).encode(), pickle.dumps(neg_samples), db=db_neg)
-    else:
-        print(f"[INFO] Using PyG (CPU) – run with multiprocessing Pool ({num_workers} workers)")
-        ctx = mp.get_context("spawn")
-        results = []
-        fail_count = 0
-        with ctx.Pool(
-                processes=num_workers,
-                initializer=_init_worker,
-                initargs=(edge_index, edge_type, num_nodes, k, tau, num_neg_samples_per_link, backend, graph)
-        ) as pool:
-            for result in tqdm(pool.imap(extract_for_one_worker, triples), total=len(triples)):
-                if result is not None:
-                    results.append(result)
-                else:
-                    fail_count += 1
-                    continue
-        print("Number of valid subgraph samples:", len(results))
-        print("Number of failed (None) triples:", fail_count)
 
-        # Sau khi gather hết result ở process cha, mở env và ghi lại:
-        with env.begin(write=True) as txn:
-            for idx, (subgraph_data, neg_samples) in enumerate(results):
-                txn.put(str(idx).encode(), pickle.dumps(subgraph_data), db=db_pos)
-                txn.put(str(idx).encode(), pickle.dumps(neg_samples), db=db_neg)
-        print(f"Saved {len(results)} positive/negative subgraphs to {db_path}")
-
-def build_adj_list(triples_all: np.ndarray, n_entities: int, n_relations: int) -> List[csr_matrix]:
-    """Build adjacency list for each relation."""
-    adj_list = []
-    for rel in range(n_relations):
-        mask = (triples_all[:, 1] == rel)
-        heads, tails = triples_all[mask, 0], triples_all[mask, 2]
-        data = np.ones(len(heads), dtype=np.int8)
-        adj = csr_matrix((data, (heads, tails)), shape=(n_entities, n_entities))
-        adj_list.append(adj)
-    return adj_list
-
+# ======= Main pipeline tối ưu tốc độ + robust ===========
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--ogb-root", type=str, required=True, help="OGB data dir, contains ogbl-biokg/")
-    parser.add_argument("--split", type=str, nargs='+', default=['train','valid','test'], help="Splits to build")
-    parser.add_argument("--db-root", type=str, required=True, help="Output dir for LMDBs (will create lmdb_train, lmdb_valid, ...)")
-    parser.add_argument("--num-neg-samples-per-link", type=int, default=1)
+    parser = argparse.ArgumentParser(description="Knowledge Graph Subgraph Extraction Pipeline (Optimized)")
+    parser.add_argument("--ogb-root", type=str, required=True)
+    parser.add_argument("--output-dir", type=str, required=True)
     parser.add_argument("--k", type=int, default=2)
-    parser.add_argument("--tau", type=int, default=2)
-    parser.add_argument("--num-workers", type=int, default=8)
-    parser.add_argument("--max-links", type=int, default=None, help="Max number of triples per split (for fast test)")
-    parser.add_argument("--backend", type=str, default="pyg", choices=["pyg", "cugraph"],
-                        help="Subgraph extraction backend: 'pyg' (CPU) or 'cugraph' (GPU)")
-    parser.add_argument("--top-k", type=int, default=None)
-    parser.add_argument("--top-rel", type=int, default=None)
+    parser.add_argument("--tau", type=int, default=1)
+    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--batch-size", type=int, default=100)
+    parser.add_argument("--max-triples", type=int, default=None)
+    parser.add_argument("--max-eval-triples", type=int, default=None)
+    parser.add_argument("--num-negatives", type=int, default=2)
+    parser.add_argument("--undirected", action="store_true", help="If set, build undirected graph (default: directed)")
+    parser.add_argument("--rel-degree-dense", action="store_true", help="Convert relation degree to dense (faster, use more RAM)")
     args = parser.parse_args()
 
-    # 1. Load OGB-BioKG và chia split
+    os.makedirs(args.output_dir, exist_ok=True)
+    logger = setup_logger(args.output_dir)
+    logger.info("Starting subgraph extraction pipeline")
+    logger.info(f"Arguments: {vars(args)}")
+
+    # Tải dữ liệu OGB
+    logger.info("Loading OGB-BioKG dataset...")
     dataset = LinkPropPredDataset(name='ogbl-biokg', root=args.ogb_root)
     split_edge = dataset.get_edge_split()
-    print(f"Splits found: {list(split_edge.keys())}")
+    logger.info("Building full graph...")
 
-    # 2. Build full KG graph
-    triples_all = np.concatenate([
-        np.stack([split_edge['train']['head'], split_edge['train']['relation'], split_edge['train']['tail']], axis=1),
-        np.stack([split_edge['valid']['head'], split_edge['valid']['relation'], split_edge['valid']['tail']], axis=1),
-        np.stack([split_edge['test']['head'], split_edge['test']['relation'], split_edge['test']['tail']], axis=1),
-    ], axis=0)
-    n_entities = int(triples_all[:, [0, 2]].max()) + 1
-    n_relations = int(triples_all[:, 1].max()) + 1
-    print(f"KG: {n_entities} entities, {n_relations} relations")
-    # --- Nếu truyền --top-rel, lọc relation phổ biến ---
-    if args.top_rel is not None:
-        rel_counts = Counter(triples_all[:, 1])
-        top_rels = [r for r, _ in rel_counts.most_common(args.top_rel)]
-        mask = np.isin(triples_all[:, 1], top_rels)
-        triples_all = triples_all[mask]
-        print(f"[INFO] Lấy {args.top_rel} relation phổ biến nhất: {top_rels}, triple count = {triples_all.shape[0]}")
-
-    # --- Nếu truyền --top-k, lọc node nhiều degree nhất ---
-    if args.top_k is not None:
-        degrees = np.bincount(triples_all[:, 0]) + np.bincount(triples_all[:, 2])
-        if len(degrees) < triples_all[:, [0, 2]].max() + 1:
-            degrees = np.pad(degrees, (0, triples_all[:, [0, 2]].max() + 1 - len(degrees)))
-        top_entities = np.argsort(-degrees)[:args.top_k]
-        entity_set = set(top_entities)
-
-        mask = np.array([(h in entity_set) and (t in entity_set) for h, _, t in triples_all])
-        triples_all = triples_all[mask]
-
-        # Chọn lại node nhiều degree nhất (nếu >1000 node)
-        nodes_in_filtered = set(triples_all[:, 0]).union(triples_all[:, 2])
-        print(f"Node thực sự có liên kết: {len(nodes_in_filtered)}")
-
-        if len(nodes_in_filtered) > 1000:
-            degrees_filtered = np.bincount(triples_all[:, 0], minlength=max(nodes_in_filtered) + 1) + \
-                               np.bincount(triples_all[:, 2], minlength=max(nodes_in_filtered) + 1)
-            nodes_in_filtered = np.array(list(nodes_in_filtered))
-            idx = np.argsort(-degrees_filtered[nodes_in_filtered])[:1000]
-            final_nodes = set(nodes_in_filtered[idx])
-            final_mask = np.array([(h in final_nodes) and (t in final_nodes) for h, _, t in triples_all])
-            triples_all = triples_all[final_mask]
-        print(f"Final #nodes: {len(set(triples_all[:, 0]).union(triples_all[:, 2]))}")
-        print(f"Final #triples: {triples_all.shape[0]}")
-
-    # 1. Lọc node thực sự có trong tập triple nhỏ
-    nodes_in_use = np.unique(np.concatenate([triples_all[:, 0], triples_all[:, 2]]))
-    num_nodes = len(nodes_in_use)
-    print("Num nodes (after shrink):", num_nodes)
-
-    # 2. Tạo mapping node id gốc → node id mới
-    node_id_map = {old: new for new, old in enumerate(nodes_in_use)}
-    id2entity = {v: k for k, v in node_id_map.items()}
-
-    # 3. Ánh xạ lại triple về id mới liên tục
-    triples_reindexed = np.array([
-        [node_id_map[h], r, node_id_map[t]]
-        for h, r, t in triples_all
-    ], dtype=np.int64)
-
-    # 4. Build lại edge_index, edge_type như chuẩn GraIL
-    heads_torch = torch.from_numpy(triples_reindexed[:, 0])
-    tails_torch = torch.from_numpy(triples_reindexed[:, 2])
-    rels_torch = torch.from_numpy(triples_reindexed[:, 1])
-
-    edge_index = torch.cat([
-        torch.stack([heads_torch, tails_torch], dim=0),
-        torch.stack([tails_torch, heads_torch], dim=0)
-    ], dim=1)
-    edge_type = torch.cat([rels_torch, rels_torch], dim=0)
-    # 5. Tạo mapping cho relation (nếu cần)
-    relation_set = sorted(set(triples_all[:, 1]))
-    relation2id = {old: new for new, old in enumerate(relation_set)}
-    id2relation = {v: k for k, v in relation2id.items()}
-
-    # 6. Lưu mapping ra file để dùng downstream
-    os.makedirs(args.db_root, exist_ok=True)
-    with open(os.path.join(args.db_root, "entity2id.pkl"), "wb") as f:
-        pickle.dump(node_id_map, f)
-    with open(os.path.join(args.db_root, "id2entity.pkl"), "wb") as f:
-        pickle.dump(id2entity, f)
-    with open(os.path.join(args.db_root, "relation2id.pkl"), "wb") as f:
-        pickle.dump(relation2id, f)
-    with open(os.path.join(args.db_root, "id2relation.pkl"), "wb") as f:
-        pickle.dump(id2relation, f)
-
-    print(f"Saved mapping: entity2id, id2entity, relation2id, id2relation to {args.db_root}")
-
-    # 4. Chọn backend (CPU/GPU)
-    graph, backend = build_graph_backend(edge_index, edge_type, args.backend)
-
-    print(
-        f"[Check] edge_index.min(): {edge_index.min().item()}, edge_index.max(): {edge_index.max().item()}, num_nodes: {num_nodes}")
-    assert edge_index.min().item() >= 0
-    assert edge_index.max().item() < num_nodes
-    for split in args.split:
+    all_triples = []
+    split_sizes = {}
+    for split in ['train', 'valid', 'test']:
         edges = split_edge[split]
-        heads, tails, rels = edges['head'], edges['tail'], edges['relation']
-        triples = np.stack([heads, tails, rels], axis=1)
+        triples = np.stack([edges['head'], edges['relation'], edges['tail']], axis=1).astype(np.int32)
+        all_triples.append(triples)
+        split_sizes[split] = int(len(triples))
+    all_triples = np.concatenate(all_triples, axis=0)
+    num_nodes = int(np.max(all_triples[:, [0, 2]]) + 1)
+    num_relations = int(np.max(all_triples[:, 1]) + 1)
 
-        # Khi lấy triple từ split_edge:
-        heads, tails, rels = edges['head'], edges['tail'], edges['relation']
-        print("Check head:", heads[:10])
-        print("Check tail:", tails[:10])
-        print("Check rel:", rels[:10])
+    save_mappings(args.output_dir, all_triples, args, split_sizes)
 
-        # Lấy triple đúng thứ tự [head, relation, tail]
-        triples = np.stack([heads, rels, tails], axis=1)
-        mask = np.array([(h in nodes_in_use) and (t in nodes_in_use) for h, _, t in triples])
-        triples = triples[mask]
+    # Đồ thị hướng hoặc không hướng
+    if args.undirected:
+        edge_sources = np.concatenate([all_triples[:, 0], all_triples[:, 2]])
+        edge_targets = np.concatenate([all_triples[:, 2], all_triples[:, 0]])
+    else:
+        edge_sources = all_triples[:, 0]
+        edge_targets = all_triples[:, 2]
+    edge_index = np.vstack([edge_sources, edge_targets]).astype(np.int32)
 
-        # Mapping lại node id
-        triples = np.array([
-            [node_id_map[h], r, node_id_map[t]]
-            for h, r, t in triples
-            if (h in node_id_map and t in node_id_map)
-        ], dtype=np.int64)
+    logger.info("Creating CSR graph...")
+    csr_graph = CSRGraph(edge_index, num_nodes)
+    with open(os.path.join(args.output_dir + "/mappings", "global_graph.pkl"), "wb") as f:
+        pickle.dump(csr_graph, f)
+    print(f"[INFO] Saved global graph to {os.path.join(args.output_dir, 'global_graph.pkl')}")
 
-        print("[Check] Một vài triple đầu sau mapping:")
-        print(triples[:10])
-        print("Relation min:", triples[:, 1].min(), "max:", triples[:, 1].max())
-        # Chỉ kiểm tra head và tail node id!
-        assert triples[:, 0].min() >= 0, "head node id âm"
-        assert triples[:, 0].max() < num_nodes, "head node id vượt quá num_nodes"
-        assert triples[:, 2].min() >= 0, "tail node id âm"
-        assert triples[:, 2].max() < num_nodes, "tail node id vượt quá num_nodes"
+    logger.info("Computing relation degrees (sparse)...")
+    rel_degree = compute_relation_degree_sparse(all_triples, num_nodes, num_relations)
+    rel_degree_dense = rel_degree.toarray() if args.rel_degree_dense else None
 
-        print("Relation min:", triples[:, 1].min(), "max:", triples[:, 1].max())
-        db_path = os.path.join(args.db_root, f"lmdb_{split}")
+    # Xử lý train
+    logger.info("Processing training triples...")
+    train_triples = np.stack([
+        split_edge['train']['head'],
+        split_edge['train']['relation'],
+        split_edge['train']['tail']
+    ], axis=1).astype(np.int32)
+    if args.max_triples and len(train_triples) > args.max_triples:
+        train_triples = train_triples[:args.max_triples]
+    train_output = os.path.join(args.output_dir, "train.lmdb")
+    train_count = parallel_extraction(
+        train_triples, csr_graph, rel_degree, rel_degree_dense, args.rel_degree_dense,
+        args.k, args.tau, args.num_workers, train_output, args.batch_size, logger
+    )
+    logger.info(f"Extracted {train_count} training subgraphs.")
 
-        #visualize_graph(triples, title=f"KG {split}")
-
-
-        build_split_subgraph_parallel(
-            split_name=split,
-            triples=triples,
-            edge_index=edge_index,
-            edge_type=edge_type,
-            num_nodes=num_nodes,
-            db_path=db_path,
-            num_neg_samples_per_link=args.num_neg_samples_per_link,
-            k=args.k,
-            tau=args.tau,
-            num_workers=args.num_workers,
-            max_links=args.max_links,
-            backend=backend,
-            graph=graph
+    # Xử lý valid/test với negatives
+    for split in ['valid', 'test']:
+        logger.info(f"Processing {split} split...")
+        split_triples = np.stack([
+            split_edge[split]['head'],
+            split_edge[split]['relation'],
+            split_edge[split]['tail']
+        ], axis=1).astype(np.int32)
+        if args.max_eval_triples and len(split_triples) > args.max_eval_triples:
+            split_triples = split_triples[:args.max_eval_triples]
+        all_triples = [split_triples]
+        for negs in negative_sample_batches(split_triples, args.num_negatives, num_nodes, args.batch_size):
+            all_triples.append(negs)
+        all_split_triples = np.vstack(all_triples)
+        split_output = os.path.join(args.output_dir, f"{split}.lmdb")
+        split_count = parallel_extraction(
+            all_split_triples, csr_graph, rel_degree, rel_degree_dense, args.rel_degree_dense,
+            args.k, args.tau, args.num_workers, split_output, args.batch_size, logger
         )
+        logger.info(f"Extracted {split_count} subgraphs for {split}")
 
-
-def visualize_graph(triples, num_nodes=None, rel_names=None, title="KG Subgraph"):
-    G = nx.MultiDiGraph()
-    for h, r, t in triples:
-        label = str(r) if rel_names is None else rel_names.get(r, str(r))
-        G.add_edge(h, t, label=label)
-
-    plt.figure(figsize=(12, 8))
-    pos = nx.spring_layout(G, seed=42, k=1.5 / np.sqrt(G.number_of_nodes()))
-    nx.draw(G, pos, with_labels=True, node_color='lightblue', node_size=500, arrows=True)
-    edge_labels = nx.get_edge_attributes(G, 'label')
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_color='red')
-    plt.title(title)
-    plt.show()
+    logger.info("Pipeline finished successfully!")
 
 if __name__ == "__main__":
     main()

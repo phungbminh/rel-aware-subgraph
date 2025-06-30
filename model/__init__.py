@@ -1,6 +1,6 @@
-from .RASG import RASGModel
+from .model import RASG
 
 __all__ = [
-    "RASGModel",
+    "RASG",
 
 ]

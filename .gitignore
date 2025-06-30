@@ -2,3 +2,5 @@
 /database/
 /experiments/
 /.venv/
+/debug_subgraph_db/
+/cache/
