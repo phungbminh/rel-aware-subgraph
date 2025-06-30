@@ -167,7 +167,7 @@ def main():
         'global_graph': global_graph,
         'num_negatives': args.num_negatives,
         'cache_size': 20000,
-        'is_debug': True,
+        'is_debug': args.is_debug,
     }
     train_dataset = SubGraphDataset(
         db_path=os.path.join(args.data_root, args.train_db),
