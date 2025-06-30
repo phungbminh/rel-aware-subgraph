@@ -51,6 +51,14 @@ def train_one_epoch(model, loader, optimizer, device, margin=1.0, max_grad_norm=
         if is_debug:
             print(f"[DEBUG][train_one_epoch] Got batch {step}")
         batch_all, batch_r, batch_size, num_negs = preprocess_batch(batch, device, is_debug=is_debug)
+
+        if step == 0 or is_debug:
+            print("[DEBUG][check] Model device:", next(model.parameters()).device)
+            print("[DEBUG][check] batch_all device:", batch_all.device)
+            print("[DEBUG][check] batch_r device:", batch_r.device)
+            if hasattr(batch_all, 'x'):
+                print("[DEBUG][check] batch_all.x device:", batch_all.x.device)
+
         if is_debug:
             print(f"[DEBUG][train_one_epoch] batch_all: {batch_all.x.shape if hasattr(batch_all, 'x') else None}, batch_r: {batch_r.shape}, batch_size: {batch_size}, num_negs: {num_negs}")
         scores = model(batch_all, batch_r).reshape(batch_size, 1 + num_negs)

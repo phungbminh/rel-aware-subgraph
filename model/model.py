@@ -149,7 +149,13 @@ class RASG(nn.Module):
         data: Batch với các field:
             x: (N, 2), edge_index, edge_attr, batch, head_idx, tail_idx
         rel_ids: (B,), relation id của mỗi graph
+
         """
+
+        def forward(self, data: Batch, rel_ids: torch.Tensor):
+            print("[DEBUG][forward] data.x device:", data.x.device)
+            print("[DEBUG][forward] rel_ids device:", rel_ids.device)
+
         x = self.node_emb(data.x)                    # (N, node_emb_dim)
         # Expand rel_ids thành (N,) để concat
         if rel_ids.dim() == 0:
