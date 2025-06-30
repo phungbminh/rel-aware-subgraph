@@ -1,5 +1,4 @@
---find-links https://data.pyg.org/whl/torch-2.6.0+cu124.html
-torch==2.6.0+cu124
+torch
 torch_geometric
 torchvision
 torchaudio
@@ -13,7 +12,4 @@ numpy
 tqdm
 lmdb
 git+https://github.com/phungbminh/ogb.git@master#egg=ogb
-cudf-cu12
-cugraph-cu12
-cupy-cuda12x
 numba
