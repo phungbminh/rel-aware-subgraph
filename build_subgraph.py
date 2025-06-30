@@ -235,7 +235,10 @@ def parallel_extraction(
                     elapsed = time.time() - start_time
                     speed = completed / elapsed if elapsed > 0 else 0
                     logger.info(f"Processed batch {idx}/{num_batches} - Speed: {speed:.2f} triples/sec")
-    writer_queue.close()
+    # writer_queue.close()
+    # writer_process.join()
+
+    writer_queue.put(None)  # Gửi sentinel (chỉ gửi sau khi pool xong)
     writer_process.join()
     return completed
 
