@@ -12,6 +12,7 @@ from queue import Empty
 from ogb.linkproppred import LinkPropPredDataset
 from scipy import sparse
 from numba import njit, prange
+from utils import CSRGraph
 
 # ======= Logger chuẩn hóa ===========
 def setup_logger(output_dir: str):
