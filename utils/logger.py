@@ -1,36 +1,35 @@
 import logging
 import os
+import sys
+import time
+import torch
 
-def setup_logger(log_path=None, level=logging.INFO):
-    """
-    Thiết lập logger ghi log ra cả console và file (nếu chỉ định).
-    - log_path: Đường dẫn file log (vd: 'logs/experiment.log'), None nếu chỉ log ra console.
-    - level: logging level (mặc định: INFO)
-    Return:
-        logger object (dùng .info(), .warning()...)
-    """
-    logger = logging.getLogger('RASG')
-    logger.setLevel(level)
-    logger.propagate = False  # Ngăn log bị nhân đôi khi import nhiều lần
 
-    # Xoá tất cả handler cũ (tránh trùng lặp log khi chạy lại notebook/script)
-    if logger.hasHandlers():
-        logger.handlers.clear()
+def setup_logger(output_dir, name="main"):
+    os.makedirs(output_dir, exist_ok=True)
+    log_file = os.path.join(output_dir, f"{name}_log.txt")
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
-    # Console handler (log ra màn hình)
-    console_handler = logging.StreamHandler()
-    console_format = logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s',
-                                       datefmt='%Y-%m-%d %H:%M:%S')
-    console_handler.setFormatter(console_format)
+    # File handler
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # File handler (log ra file, nếu có log_path)
-    if log_path is not None:
-        os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        file_handler = logging.FileHandler(log_path)
-        file_format = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s',
-                                        datefmt='%Y-%m-%d %H:%M:%S')
-        file_handler.setFormatter(file_format)
-        logger.addHandler(file_handler)
-
     return logger
+
+
+def debug_tensor(tensor, name, logger=None):
+    msg = f"{name}: shape={tensor.shape}, dtype={tensor.dtype}, device={tensor.device}, min={tensor.min().item():.4f}, max={tensor.max().item():.4f}, mean={tensor.mean().item():.4f}"
+    if logger:
+        logger.debug(msg)
+    else:
+        print(msg)

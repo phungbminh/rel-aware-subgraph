@@ -1,4 +1,4 @@
-from .data_utils import plot_rel_dist, build_adj_mtx, save_to_file
+from .data_utils import plot_rel_dist, build_adj_mtx, save_to_file, debug_tensor
 from .graph_utils import CSRGraph
 
 from .pyg_utils import collate_pyg
@@ -8,5 +8,6 @@ __all__ = [
     "build_adj_mtx",
     "save_to_file",
     "CSRGraph",
-    "collate_pyg"
+    "collate_pyg",
+    "debug_tensor"
 ]

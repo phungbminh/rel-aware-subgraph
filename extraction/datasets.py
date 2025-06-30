@@ -6,6 +6,7 @@ import torch
 from torch.utils.data import Dataset
 from torch_geometric.data import Data, Batch
 from collections import OrderedDict
+from utils import debug_tensor
 
 #####################
 # 1. COLLATE FN
@@ -37,17 +38,24 @@ def collate_pyg(batch):
 #####################
 
 class SubGraphDataset(Dataset):
-    def __init__(self, db_path, mapping_dir, global_graph=None, num_negatives=0, split='train', cache_size=4096):
+    def __init__(self, db_path, mapping_dir, global_graph=None, num_negatives=0, split='train', cache_size=4096, is_debug=False):
         # Load entity/relation mapping
         self.entity2id = pickle.load(open(os.path.join(mapping_dir, 'entity2id.pkl'), 'rb'))
         self.relation2id = pickle.load(open(os.path.join(mapping_dir, 'relation2id.pkl'), 'rb'))
         self.id2entity = pickle.load(open(os.path.join(mapping_dir, 'id2entity.pkl'), 'rb'))
         self.id2relation = pickle.load(open(os.path.join(mapping_dir, 'id2relation.pkl'), 'rb'))
 
-        # LMDB keys
+        # LMDB keys - CHỈ lấy key hợp lệ (value là pickle)
         self.env = lmdb.open(db_path, readonly=True, lock=False, readahead=False)
         with self.env.begin() as txn:
-            self.keys = [k for k, _ in txn.cursor() if k != b'_progress']
+            self.keys = []
+            n_bad = 0
+            for k, v in txn.cursor():
+                if v and v[:1] in [b'\x80', b'\x81']:
+                    self.keys.append(k)
+                else:
+                    n_bad += 1
+            print(f"[INFO] Loaded {len(self.keys)} valid subgraphs from {db_path}, {n_bad} key lỗi đã bị loại.")
 
         self.global_graph = global_graph
         self.num_negatives = num_negatives
@@ -55,15 +63,20 @@ class SubGraphDataset(Dataset):
         self.cache = OrderedDict()
         self.cache_size = cache_size
         self.valid_entity_ids = set(self.entity2id.keys())
-        print(f"[INFO] Loaded {len(self)} subgraphs from {db_path}")
+        self.is_debug = is_debug
+        if self.is_debug:
+            print(f"[DEBUG] Dataset initialized with {len(self)} samples")
 
     def __len__(self):
         return len(self.keys)
 
     def __getitem__(self, idx):
+        # Check cache trước
         if idx in self.cache:
             item = self.cache.pop(idx)
             self.cache[idx] = item
+            if self.is_debug and idx < 5:
+                print(f"[DEBUG][CACHE] idx={idx}, keys: {list(item.keys())}")
             return item
 
         key = self.keys[idx]
@@ -73,14 +86,42 @@ class SubGraphDataset(Dataset):
             raise ValueError(f"Key {key} not found in LMDB {self.env}")
 
         data = pickle.loads(raw)
+
+        # Debug dữ liệu raw
+        if self.is_debug and idx < 5:
+            print(f"[DEBUG][LMDB] Sample {idx}: key={key}, data keys: {list(data.keys())}")
+            if 'edge_index' in data:
+                debug_tensor(data['edge_index'], f"Sample{idx}/edge_index", 5)
+            if 'node_label' in data:
+                debug_tensor(data['node_label'], f"Sample{idx}/node_label", 5)
+            if 'h_idx' in data:
+                print(f"Sample{idx}: h_idx={data['h_idx']}, t_idx={data['t_idx']}")
+            print("-----------------")
+
+        # Tạo PyG Data object
         graph = self.create_graph(data['triple'], data['nodes'], data['s_dist'], data['t_dist'])
+
+        # Debug graph structure
+        if self.is_debug and idx < 5:
+            print(f"[DEBUG][Graph] idx={idx} | x shape: {graph.x.shape} | edge_index: {graph.edge_index.shape}")
+            debug_tensor(graph.x, f"Sample{idx}/x", 5)
+            debug_tensor(graph.edge_index, f"Sample{idx}/edge_index", 10)
 
         # Sinh negative sample nếu cần
         neg_graphs = []
         if self.num_negatives > 0 and self.split == "train":
             neg_graphs = self.sample_negatives(data['triple'], data['nodes'], data['s_dist'], data['t_dist'])
+            if self.is_debug and idx < 5:
+                print(f"[DEBUG][Negatives] idx={idx}, num_negatives={len(neg_graphs)}")
+                for i, g in enumerate(neg_graphs[:2]):  # chỉ debug 2 negative đầu
+                    print(f"  [DEBUG] Negative {i}: x shape {g.x.shape if hasattr(g, 'x') else 'N/A'}")
 
-        item = {'graph': graph, 'relation': graph.relation_label, 'neg_graphs': neg_graphs}
+        # Đóng gói lại
+        item = {
+            'graph': graph,
+            'relation': graph.relation_label,
+            'neg_graphs': neg_graphs
+        }
         if len(self.cache) >= self.cache_size:
             self.cache.popitem(last=False)
         self.cache[idx] = item
@@ -177,7 +218,8 @@ if __name__ == "__main__":
         mapping_dir="/Users/minhbui/Personal/Project/Master/rel-aware-subgraph/debug_subgraph_db/mappings/",
         global_graph=DummyCSR(),
         num_negatives=2,
-        split='train'
+        split='train',
+        is_debug = True
     )
 
     from torch.utils.data import DataLoader
@@ -186,8 +228,15 @@ if __name__ == "__main__":
     )
 
     for pos_graphs, relations, negatives_list, num_negs in loader:
-        print("Batch size:", len(pos_graphs))
-        print("Relation IDs:", relations)
-        print("Num negatives per positive:", num_negs)
-        print("First graph x shape:", pos_graphs[0].x.shape)
+        if getattr(dataset, 'is_debug', False):
+            print(f"[DEBUG][Loader] Got batch. Batch size: {len(pos_graphs)}")
+            print(f"[DEBUG][Loader] Relations: {relations}")
+            print(f"[DEBUG][Loader] Num negatives per pos: {num_negs}")
+            debug_tensor(pos_graphs[0].x, "First pos_graph/x")
+
         break
+
+    count = 0
+    for pos_graphs, relations, negatives_list, num_negs in loader:
+        print(f"[BATCH {count}] Batch size: {len(pos_graphs)}")
+        count += 1

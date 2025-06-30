@@ -164,7 +164,8 @@ def main():
         'mapping_dir': os.path.join(args.data_root, args.mapping_dir),
         'global_graph': global_graph,
         'num_negatives': args.num_negatives,
-        'cache_size': 20000
+        'cache_size': 20000,
+        'is_debug': True,
     }
     train_dataset = SubGraphDataset(
         db_path=os.path.join(args.data_root, args.train_db),
@@ -216,7 +217,8 @@ def main():
         margin=args.margin,
         patience=args.patience,
         num_workers=args.num_workers,
-        checkpoint_path=checkpoint_path
+        checkpoint_path=checkpoint_path,
+        is_debug=True
     )
 
     # ===== Báo cáo kết quả =====

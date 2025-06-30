@@ -7,35 +7,48 @@ from torch_geometric.data import Batch
 import os
 from utils import collate_pyg
 
-def create_mega_batch(pos_graphs, relations, negatives_list):
+def create_mega_batch(pos_graphs, relations, negatives_list, is_debug=False):
     """
     Gộp positive và negative vào một batch PyG lớn, vectorized.
     """
+    if is_debug:
+        print("[DEBUG][create_mega_batch] Number of pos_graphs:", len(pos_graphs))
+        print("[DEBUG][create_mega_batch] Number of negatives per pos:", len(negatives_list[0]) if negatives_list else 0)
     all_graphs = pos_graphs + [g for negs in negatives_list for g in negs]
     all_rel = []
     for i, negs in enumerate(negatives_list):
         all_rel += [relations[i]] * (1 + len(negs))
+    if is_debug:
+        print("[DEBUG][create_mega_batch] Total all_graphs:", len(all_graphs))
     batch_all = Batch.from_data_list(all_graphs)
     batch_r = torch.tensor(all_rel, dtype=torch.long)
     batch_size = len(pos_graphs)
     num_negs = len(negatives_list[0]) if negatives_list else 0
+    if is_debug:
+        print("[DEBUG][create_mega_batch] batch_all shape:", batch_all.x.shape if hasattr(batch_all, 'x') else None)
+        print("[DEBUG][create_mega_batch] batch_r shape:", batch_r.shape)
     return batch_all, batch_r, batch_size, num_negs
 
-def preprocess_batch(batch, device):
+def preprocess_batch(batch, device, is_debug=False):
     pos_graphs, relations, negatives_list, _ = batch
-    batch_all, batch_r, batch_size, num_negs = create_mega_batch(pos_graphs, relations, negatives_list)
-    # CUDA: dùng non_blocking, CPU/MPS bỏ qua param này
+    batch_all, batch_r, batch_size, num_negs = create_mega_batch(pos_graphs, relations, negatives_list, is_debug=is_debug)
     kwargs = {'non_blocking': True} if (torch.cuda.is_available() and str(device).startswith("cuda")) else {}
+    if is_debug:
+        print("[DEBUG][preprocess_batch] Moving batch_all to device", device)
     batch_all = batch_all.to(device, **kwargs)
     batch_r = batch_r.to(device, **kwargs)
     return batch_all, batch_r, batch_size, num_negs
 
-def train_one_epoch(model, loader, optimizer, device, margin=1.0, max_grad_norm=1.0):
+def train_one_epoch(model, loader, optimizer, device, margin=1.0, max_grad_norm=1.0, is_debug=False):
     model.train()
     total_loss, n_samples = 0, 0
-    for batch in tqdm(loader, desc='Training'):
-        batch_all, batch_r, batch_size, num_negs = preprocess_batch(batch, device)
+    print("[DEBUG][train_one_epoch] Start training")
+    for step, batch in enumerate(tqdm(loader, desc='Training')):
+        print(f"[DEBUG][train_one_epoch] Got batch {step}")
+        batch_all, batch_r, batch_size, num_negs = preprocess_batch(batch, device, is_debug=is_debug)
+        print(f"[DEBUG][train_one_epoch] batch_all: {batch_all.x.shape if hasattr(batch_all, 'x') else None}, batch_r: {batch_r.shape}, batch_size: {batch_size}, num_negs: {num_negs}")
         scores = model(batch_all, batch_r).reshape(batch_size, 1 + num_negs)
+        print(f"[DEBUG][train_one_epoch] scores shape: {scores.shape}")
         scores_pos, scores_neg = scores[:, 0].unsqueeze(1), scores[:, 1:]
         loss = F.margin_ranking_loss(
             scores_pos.expand_as(scores_neg),
@@ -43,29 +56,36 @@ def train_one_epoch(model, loader, optimizer, device, margin=1.0, max_grad_norm=
             target=torch.ones_like(scores_neg),
             margin=margin, reduction='sum'
         )
+        print(f"[DEBUG][train_one_epoch] loss: {loss.item()}")
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
         optimizer.step()
         total_loss += loss.item()
         n_samples += batch_size
+    print("[DEBUG][train_one_epoch] End training")
     return total_loss / n_samples
 
 @torch.no_grad()
-def evaluate(model, loader, device):
+def evaluate(model, loader, device, is_debug=False):
     model.eval()
     all_ranks = []
-    for batch in tqdm(loader, desc='Evaluating'):
-        batch_all, batch_r, batch_size, num_negs = preprocess_batch(batch, device)
+    print("[DEBUG][evaluate] Start evaluation")
+    for step, batch in enumerate(tqdm(loader, desc='Evaluating')):
+        print(f"[DEBUG][evaluate] Got batch {step}")
+        batch_all, batch_r, batch_size, num_negs = preprocess_batch(batch, device, is_debug=is_debug)
         scores = model(batch_all, batch_r).reshape(batch_size, 1 + num_negs)
         pos_scores, neg_scores = scores[:, 0].unsqueeze(1), scores[:, 1:]
         above = (neg_scores > pos_scores).sum(dim=1)
         equal = (neg_scores == pos_scores).sum(dim=1)
         batch_ranks = 1.0 + above + equal * 0.5
         all_ranks.append(batch_ranks.cpu())
+        if is_debug and step == 0:
+            print(f"[DEBUG][evaluate] batch_ranks: {batch_ranks}")
     all_ranks = torch.cat(all_ranks)
     mrr = (1.0 / all_ranks).mean().item()
     hits = [(all_ranks <= k).float().mean().item() for k in [1, 3, 10]]
+    print("[DEBUG][evaluate] End evaluation")
     return mrr, hits, all_ranks
 
 def run_training(
@@ -81,18 +101,18 @@ def run_training(
     weight_decay=1e-5,
     patience=10,
     max_grad_norm=1.0,
-    num_workers=4,
+    num_workers=0,         # NÊN để 0 nếu dùng LMDB!
     checkpoint_path=None,
-    logger=None
+    logger=None,
+    is_debug=False
 ):
-    # DataLoader params auto-tuned cho CUDA/CPU
     pin_memory = torch.cuda.is_available() and str(device).startswith("cuda")
     loader_kwargs = dict(
         num_workers=num_workers,
         collate_fn=collate_pyg,
         pin_memory=pin_memory,
-        persistent_workers=(num_workers > 0),
-        prefetch_factor=2 if num_workers > 0 else None
+        persistent_workers=False,  # Không persistent khi debug hoặc với LMDB
+        prefetch_factor=None
     )
 
     train_loader = DataLoader(
@@ -113,13 +133,13 @@ def run_training(
         shuffle=False,
         **loader_kwargs
     )
-    # Multi-GPU support (2 card trở lên)
+    print(f"[DEBUG][run_training] Loader created. Pin memory: {pin_memory}, num_workers: {num_workers}")
+
     if torch.cuda.device_count() > 1 and str(device).startswith("cuda"):
         model = torch.nn.DataParallel(model)
-        print(f"Using {torch.cuda.device_count()} GPUs with DataParallel!")
+        print(f"[DEBUG][run_training] Using {torch.cuda.device_count()} GPUs with DataParallel!")
     model = model.to(device)
 
-    # Optimizer: fused chỉ dùng được khi CUDA, torch>=2.0, nên kiểm tra an toàn
     try:
         optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay, fused=pin_memory)
     except TypeError:
@@ -132,9 +152,12 @@ def run_training(
     for epoch in range(1, epochs + 1):
         msg = f"\n=== Epoch {epoch}/{epochs} ==="
         print(msg) if logger is None else logger.info(msg)
-        train_loss = train_one_epoch(model, train_loader, optimizer, device, margin, max_grad_norm)
+        print(f"[DEBUG][run_training] Epoch {epoch}: start train_one_epoch")
+        train_loss = train_one_epoch(model, train_loader, optimizer, device, margin, max_grad_norm, is_debug=is_debug)
+        print(f"[DEBUG][run_training] Epoch {epoch}: train_loss = {train_loss}")
         history['train_loss'].append(train_loss)
-        val_mrr, val_hits, _ = evaluate(model, valid_loader, device)
+        val_mrr, val_hits, _ = evaluate(model, valid_loader, device, is_debug=is_debug)
+        print(f"[DEBUG][run_training] Epoch {epoch}: val_mrr = {val_mrr}, val_hits = {val_hits}")
         history['val_mrr'].append(val_mrr)
         history['val_hits'].append(val_hits)
         scheduler.step(val_mrr)
@@ -153,7 +176,7 @@ def run_training(
                     'history': history
                 }
                 torch.save(state, checkpoint_path)
-                print(f"Checkpoint saved at {checkpoint_path}") if logger is None else logger.info(f"Checkpoint saved at {checkpoint_path}")
+                print(f"[DEBUG][run_training] Checkpoint saved at {checkpoint_path}")
         else:
             no_improve += 1
             if no_improve >= patience:
@@ -161,14 +184,13 @@ def run_training(
                 print(msg) if logger is None else logger.info(msg)
                 break
 
-    # Final test
     if checkpoint_path and os.path.exists(checkpoint_path):
         state = torch.load(checkpoint_path, map_location=device)
         model.load_state_dict(state['state_dict'])
-        print("Loaded best model for testing") if logger is None else logger.info("Loaded best model for testing")
+        print("[DEBUG][run_training] Loaded best model for testing")
 
     print("\n==== Final Evaluation on Test Set ====") if logger is None else logger.info("\n==== Final Evaluation on Test Set ====")
-    test_mrr, test_hits, test_ranks = evaluate(model, test_loader, device)
+    test_mrr, test_hits, test_ranks = evaluate(model, test_loader, device, is_debug=is_debug)
     msg = (f"Test MRR: {test_mrr:.4f} | Hits@1/3/10: {test_hits[0]:.4f}/{test_hits[1]:.4f}/{test_hits[2]:.4f}")
     print(msg) if logger is None else logger.info(msg)
     return {

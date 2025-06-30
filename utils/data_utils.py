@@ -44,3 +44,31 @@ def build_adj_mtx(triples_path, entity2id, relation2id):
         adj_list.append(adj)
 
     return adj_list
+
+def debug_tensor(tensor, name=None, num_values=10):
+    """
+    In ra thông tin chi tiết về một tensor để debug.
+    Args:
+        tensor: torch.Tensor
+        name: Tên tensor (string) in ra cho dễ nhận diện
+        num_values: Số giá trị đầu tiên sẽ print ra (mặc định 10)
+    """
+    if name:
+        print(f"[DEBUG] Tensor '{name}':")
+    else:
+        print("[DEBUG] Tensor:")
+
+    # Thông tin chung
+    print(f"  Shape: {tuple(tensor.shape)}")
+    print(f"  Dtype: {tensor.dtype}")
+    print(f"  Device: {tensor.device}")
+
+    # Nếu tensor ở trên GPU, chuyển về CPU để print
+    if tensor.device.type == 'cuda':
+        tensor = tensor.cpu()
+
+    # Flatten và lấy vài giá trị đầu tiên (có thể dùng .numpy() luôn)
+    arr = tensor.detach().cpu().flatten()
+    n = min(num_values, arr.shape[0])
+    print(f"  Values: {arr[:n].numpy()}" + (f" ... ({arr.shape[0]} values)" if arr.shape[0] > n else ""))
+    print("")

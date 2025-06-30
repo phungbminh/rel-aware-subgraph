@@ -3,36 +3,24 @@ from torch_geometric.data import Batch
 from torch_geometric.data import Batch, Data
 
 def collate_pyg(batch):
-    """
-    Chuẩn hóa batch:
-        - batch: List các dict với keys: 'graph', 'relation', 'neg_graphs'
-        - Ghép positive và negative thành danh sách, pad negative nếu thiếu
-    Trả về:
-        - batch_all: Batch PyG
-        - relations: Tensor relation ids
-        - batch_size: Số positive
-        - num_negs: Số negative mỗi positive
-        - negatives_list: List negative của từng positive (giữ cho create_mega_batch)
-    """
+    is_debug = hasattr(batch[0], 'is_debug') and batch[0].is_debug if batch else False
+    if is_debug:
+        print(f"[DEBUG][Collate] Batch size: {len(batch)}")
+        for i, item in enumerate(batch):
+            print(f"  [DEBUG] Item {i}: graph={type(item['graph'])}, neg_graphs={len(item['neg_graphs'])}")
     pos_graphs = []
     neg_graphs_list = []
     relations = []
-
-    # Tìm số lượng negative tối đa
     max_num_negs = max(len(item['neg_graphs']) for item in batch)
-
     for item in batch:
         pos_graphs.append(item['graph'])
         relations.append(item['relation'])
-
         negs = item['neg_graphs']
-        # Pad bằng Data() nếu thiếu
         if len(negs) < max_num_negs:
             negs = negs + [Data()] * (max_num_negs - len(negs))
         neg_graphs_list.append(negs)
-
-    # Dạng [batch_size, num_negs] => [batch_size * num_negs]
-    # (sẽ flatten ở create_mega_batch)
+    if is_debug:
+        print(f"[DEBUG][Collate] max_num_negs: {max_num_negs}")
     return pos_graphs, relations, neg_graphs_list, max_num_negs
 
 
