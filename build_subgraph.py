@@ -160,23 +160,16 @@ def negative_sample_batches(positive_triples, num_negatives, num_nodes, batch_si
 def async_writer(queue, output_path, total_items, logger, progress_key=b'_progress'):
     env = lmdb.open(output_path, map_size=1024 ** 4, max_dbs=1)
     db = env.open_db()
-    with env.begin(write=True, db=db) as txn:
-        value = txn.get(progress_key)
-        if value == b'COMPLETED':
-            logger.info("Database already marked as COMPLETED. Nothing to do.")
-            count = total_items
-        elif value is not None:
+    count = 0
+    txn = env.begin(write=True, db=db)
+    try:
+        while True:
             try:
-                count = int(value)
-                logger.info(f"Resuming from item {count}")
-            except Exception:
-                logger.warning(f"Progress key exists but value is not an integer: {value}")
-                count = 0
-        else:
-            count = 0
-        while count < total_items:
-            try:
-                key, data = queue.get(timeout=30)
+                key_data = queue.get(timeout=30)
+                if key_data is None:
+                    logger.info("Writer received sentinel, exiting.")
+                    break
+                key, data = key_data
                 txn.put(key, pickle.dumps(data))
                 count += 1
                 if count % 1000 == 0:
@@ -184,15 +177,17 @@ def async_writer(queue, output_path, total_items, logger, progress_key=b'_progre
                     txn.commit()
                     txn = env.begin(write=True, db=db)
             except Empty:
-                if count >= total_items:
-                    break
+                logger.info("Writer queue is empty, exiting.")
+                break
             except Exception as e:
                 logger.error(f"Writer error: {str(e)}")
                 break
-    with env.begin(write=True, db=db) as txn:
         txn.put(progress_key, b'COMPLETED')
-    logger.info(f"Writer process finished for {output_path}.")
-    env.close()
+        txn.commit()
+        logger.info(f"Writer process finished for {output_path}. Wrote {count} items.")
+    finally:
+        env.close()
+
 
 # ======= parallel_extraction: log mỗi vài batch, close queue ===========
 def parallel_extraction(
@@ -234,12 +229,11 @@ def parallel_extraction(
                 if logger and (idx % 2 == 0 or idx == num_batches-1):  # Log mỗi 2 batch
                     elapsed = time.time() - start_time
                     speed = completed / elapsed if elapsed > 0 else 0
-                    logger.info(f"Processed batch {idx}/{num_batches} - Speed: {speed:.2f} triples/sec")
-    # writer_queue.close()
-    # writer_process.join()
-
-    writer_queue.put(None)  # Gửi sentinel (chỉ gửi sau khi pool xong)
+                    #logger.info(f"Processed batch {idx}/{num_batches} - Speed: {speed:.2f} triples/sec")
+    writer_queue.put(None)  # Gửi sentinel (kết thúc writer)
     writer_process.join()
+    writer_queue.close()
+    writer_queue.join_thread()
     return completed
 
 # ======= Lưu mapping file + metadata ===========
