@@ -296,25 +296,50 @@ def main():
     logger.info("Building full graph...")
 
     all_triples = []
-    split_sizes = {}
-    for split in ['train', 'valid', 'test']:
+    # split_sizes = {}
+    # for split in ['train', 'valid', 'test']:
+    #     edges = split_edge[split]
+    #     triples = np.stack([edges['head'], edges['relation'], edges['tail']], axis=1).astype(np.int32)
+    #     all_triples.append(triples)
+    #     split_sizes[split] = int(len(triples))
+    #
+    #
+    # all_triples = np.concatenate(all_triples, axis=0)
+    # num_nodes = int(np.max(all_triples[:, [0, 2]]) + 1)
+    # num_relations = int(np.max(all_triples[:, 1]) + 1)
+    # Tách train riêng để xây đồ thị
+    train_triples = np.stack([
+        split_edge['train']['head'],
+        split_edge['train']['relation'],
+        split_edge['train']['tail']
+    ], axis=1).astype(np.int32)
+    # Tính num_nodes/num_relations từ toàn bộ dữ liệu
+    all_triples = [train_triples]
+    for split in ['valid', 'test']:
         edges = split_edge[split]
-        triples = np.stack([edges['head'], edges['relation'], edges['tail']], axis=1).astype(np.int32)
-        all_triples.append(triples)
-        split_sizes[split] = int(len(triples))
+        all_triples.append(np.stack([edges['head'], edges['relation'], edges['tail']], axis=1))
     all_triples = np.concatenate(all_triples, axis=0)
     num_nodes = int(np.max(all_triples[:, [0, 2]]) + 1)
     num_relations = int(np.max(all_triples[:, 1]) + 1)
+    split_sizes = {s: len(split_edge[s]['head']) for s in ['train', 'valid', 'test']}
 
     save_mappings(args.output_dir, all_triples, args, split_sizes)
 
     # Đồ thị hướng hoặc không hướng
+    # if args.undirected:
+    #     edge_sources = np.concatenate([all_triples[:, 0], all_triples[:, 2]])
+    #     edge_targets = np.concatenate([all_triples[:, 2], all_triples[:, 0]])
+    # else:
+    #     edge_sources = all_triples[:, 0]
+    #     edge_targets = all_triples[:, 2]
+    # edge_index = np.vstack([edge_sources, edge_targets]).astype(np.int32)
+
     if args.undirected:
-        edge_sources = np.concatenate([all_triples[:, 0], all_triples[:, 2]])
-        edge_targets = np.concatenate([all_triples[:, 2], all_triples[:, 0]])
+        edge_sources = np.concatenate([train_triples[:, 0], train_triples[:, 2]])
+        edge_targets = np.concatenate([train_triples[:, 2], train_triples[:, 0]])
     else:
-        edge_sources = all_triples[:, 0]
-        edge_targets = all_triples[:, 2]
+        edge_sources = train_triples[:, 0]
+        edge_targets = train_triples[:, 2]
     edge_index = np.vstack([edge_sources, edge_targets]).astype(np.int32)
 
     logger.info("Creating CSR graph...")
@@ -324,7 +349,9 @@ def main():
     print(f"[INFO] Saved global graph to {os.path.join(args.output_dir, 'global_graph.pkl')}")
 
     logger.info("Computing relation degrees (sparse)...")
-    rel_degree = compute_relation_degree_sparse(all_triples, num_nodes, num_relations)
+    # rel_degree = compute_relation_degree_sparse(all_triples, num_nodes, num_relations)
+    # rel_degree_dense = rel_degree.toarray() if args.rel_degree_dense else None
+    rel_degree = compute_relation_degree_sparse(train_triples, num_nodes, num_relations)
     rel_degree_dense = rel_degree.toarray() if args.rel_degree_dense else None
 
     # Xử lý train
