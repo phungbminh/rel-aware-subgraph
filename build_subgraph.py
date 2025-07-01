@@ -84,15 +84,16 @@ def compute_relation_degree_sparse(triples, num_nodes, num_relations):
 # ======= WorkerContext chứa graph, degree, param ===========
 class WorkerContext:
     __slots__ = ('csr_graph', 'rel_degree', 'rel_degree_dense', 'use_dense', 'k', 'tau')
-    def __init__(self, csr_graph, rel_degree, rel_degree_dense, use_dense, k, tau):
+    def __init__(self, csr_graph, rel_degree, rel_degree_dense, use_dense, k, tau, max_nodes_per_graph=500):
         self.csr_graph = csr_graph
         self.rel_degree = rel_degree
         self.rel_degree_dense = rel_degree_dense
         self.use_dense = use_dense
         self.k = k
         self.tau = tau
+        self.max_nodes_per_graph = max_nodes_per_graph
 
-# ======= Trích xuất subgraph từng batch, dùng getcol nhanh ===========
+    # ======= Trích xuất subgraph từng batch, dùng getcol nhanh ===========
 def extract_batch_subgraphs(triples_batch, ctx: WorkerContext):
     """Trích xuất subgraph k-hop cho từng triple. Truy vấn rel_degree theo cột (r), cực nhanh."""
     sources = triples_batch[:, 0].astype(np.int32)
@@ -118,6 +119,23 @@ def extract_batch_subgraphs(triples_batch, ctx: WorkerContext):
         if not np.any(valid_mask):
             valid_mask = rel_counts > 0
         filtered_nodes = candidate_nodes[valid_mask]
+
+        # === GIỚI HẠN SỐ NODE QUAN TRỌNG ===
+        if len(filtered_nodes) > ctx.max_nodes_per_graph:
+            # Tính điểm quan trọng: tổng nghịch đảo khoảng cách tới head và tail
+            s_dist = src_dists[i, filtered_nodes]
+            t_dist = tgt_dists[i, filtered_nodes]
+
+            # Tránh chia cho 0
+            s_dist_inv = np.where(s_dist == 0, 10, 1.0 / (s_dist + 1e-5))
+            t_dist_inv = np.where(t_dist == 0, 10, 1.0 / (t_dist + 1e-5))
+
+            importance = s_dist_inv + t_dist_inv + 0.1 * rel_counts[valid_mask]
+
+            # Chọn top-k node quan trọng nhất
+            top_indices = np.argsort(importance)[-ctx.max_nodes_per_graph:]
+            filtered_nodes = filtered_nodes[top_indices]
+
         results.append({
             'triple': (int(h), int(r), int(t)),
             'nodes': filtered_nodes.tolist(),
@@ -202,9 +220,10 @@ def parallel_extraction(
         num_workers: int,
         output_path: str,
         batch_size: int = 1000,
-        logger: logging.Logger = None
+        logger: logging.Logger = None,
+        max_nodes_per_graph: int=500,
 ):
-    ctx = WorkerContext(csr_graph, rel_degree, rel_degree_dense, use_dense, k, tau)
+    ctx = WorkerContext(csr_graph, rel_degree, rel_degree_dense, use_dense, k, tau, max_nodes_per_graph)
     num_batches = (len(triples) + batch_size - 1) // batch_size
     batches = [
         (i, triples[i * batch_size: (i + 1) * batch_size], ctx)
@@ -282,7 +301,10 @@ def main():
     parser.add_argument("--num-negatives", type=int, default=2)
     parser.add_argument("--undirected", action="store_true", help="If set, build undirected graph (default: directed)")
     parser.add_argument("--rel-degree-dense", action="store_true", help="Convert relation degree to dense (faster, use more RAM)")
+    parser.add_argument("--max-nodes-per-graph", type=int, default=500)
     args = parser.parse_args()
+
+    max_nodes_per_graph = args.max_nodes_per_graph
 
     os.makedirs(args.output_dir, exist_ok=True)
     logger = setup_logger(args.output_dir)
@@ -366,7 +388,7 @@ def main():
     train_output = os.path.join(args.output_dir, "train.lmdb")
     train_count = parallel_extraction(
         train_triples, csr_graph, rel_degree, rel_degree_dense, args.rel_degree_dense,
-        args.k, args.tau, args.num_workers, train_output, args.batch_size, logger
+        args.k, args.tau, args.num_workers, train_output, args.batch_size, logger, max_nodes_per_graph
     )
     logger.info(f"Extracted {train_count} training subgraphs.")
 
