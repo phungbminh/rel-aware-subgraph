@@ -90,15 +90,15 @@ class SubGraphDataset(Dataset):
         data = pickle.loads(raw)
 
         # Debug dữ liệu raw
-        #if self.is_debug and idx < 5:
-        print(f"[DEBUG][LMDB] Sample {idx}: key={key}, data keys: {list(data.keys())}")
-        if 'edge_index' in data:
-            debug_tensor(data['edge_index'], f"Sample{idx}/edge_index", 5)
-        if 'node_label' in data:
-            debug_tensor(data['node_label'], f"Sample{idx}/node_label", 5)
-        if 'h_idx' in data:
-            print(f"Sample{idx}: h_idx={data['h_idx']}, t_idx={data['t_idx']}")
-        print("-----------------")
+        if self.is_debug and idx < 5:
+            print(f"[DEBUG][LMDB] Sample {idx}: key={key}, data keys: {list(data.keys())}")
+            if 'edge_index' in data:
+                debug_tensor(data['edge_index'], f"Sample{idx}/edge_index", 5)
+            if 'node_label' in data:
+                debug_tensor(data['node_label'], f"Sample{idx}/node_label", 5)
+            if 'h_idx' in data:
+                print(f"Sample{idx}: h_idx={data['h_idx']}, t_idx={data['t_idx']}")
+            print("-----------------")
 
         # Tạo PyG Data object
         graph = self.create_graph(data['triple'], data['nodes'], data['s_dist'], data['t_dist'])

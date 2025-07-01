@@ -13,6 +13,7 @@ from ogb.linkproppred import LinkPropPredDataset
 from scipy import sparse
 from numba import njit, prange
 from utils import CSRGraph
+from .verify_subgraph import lmdb_summary
 
 # ======= Logger chuẩn hóa ===========
 def setup_logger(output_dir: str):
@@ -364,6 +365,8 @@ def main():
         logger.info(f"Extracted {split_count} subgraphs for {split}")
 
     logger.info("Pipeline finished successfully!")
+
+    lmdb_summary(train_output, args.output_dir + "/mappings/global_graph.pkl", max_samples=10000)
 
 if __name__ == "__main__":
     main()
