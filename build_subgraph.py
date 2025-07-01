@@ -13,7 +13,7 @@ from ogb.linkproppred import LinkPropPredDataset
 from scipy import sparse
 from numba import njit, prange
 from utils import CSRGraph
-from .verify_subgraph import lmdb_summary
+from verify_subgraph import lmdb_summary
 
 # ======= Logger chuẩn hóa ===========
 def setup_logger(output_dir: str):
