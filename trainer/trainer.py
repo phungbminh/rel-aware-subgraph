@@ -51,8 +51,8 @@ def train_one_epoch(model, loader, optimizer, device, margin=1.0, max_grad_norm=
     if is_debug:
         print("[DEBUG][train_one_epoch] Start training")
     for step, batch in enumerate(tqdm(loader, desc='Training')):
-        print(torch.cuda.memory_allocated() / 1024 ** 3, "GB allocated")
-        print(torch.cuda.memory_reserved() / 1024 ** 3, "GB reserved")
+        # print(torch.cuda.memory_allocated() / 1024 ** 3, "GB allocated")
+        # print(torch.cuda.memory_reserved() / 1024 ** 3, "GB reserved")
         if is_debug:
             print(f"[DEBUG][train_one_epoch] Got batch {step}")
         batch_all, batch_r, batch_size, num_negs = preprocess_batch(batch, device, is_debug=is_debug)
