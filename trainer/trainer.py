@@ -159,7 +159,7 @@ def run_training(
     pin_memory = torch.cuda.is_available() and str(device).startswith("cuda")
     loader_kwargs = dict(
         num_workers=num_workers,
-        collate_fn=GraphPackedBatch.from_data_list,
+        collate_fn=collate_fn,
         pin_memory=pin_memory,
         persistent_workers=True,  # Không persistent khi debug hoặc với LMDB
         prefetch_factor=2
