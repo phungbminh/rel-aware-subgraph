@@ -83,7 +83,7 @@ def compute_relation_degree_sparse(triples, num_nodes, num_relations):
 
 # ======= WorkerContext chứa graph, degree, param ===========
 class WorkerContext:
-    __slots__ = ('csr_graph', 'rel_degree', 'rel_degree_dense', 'use_dense', 'k', 'tau')
+    __slots__ = ('csr_graph', 'rel_degree', 'rel_degree_dense', 'use_dense', 'k', 'tau','max_nodes_per_graph')
     def __init__(self, csr_graph, rel_degree, rel_degree_dense, use_dense, k, tau, max_nodes_per_graph=500):
         self.csr_graph = csr_graph
         self.rel_degree = rel_degree
