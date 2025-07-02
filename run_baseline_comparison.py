@@ -3,8 +3,21 @@
 Baseline Comparison Script for RASG Research
 Train and evaluate TransE, ComplEx, RotatE against RASG model
 
-Usage:
-    python run_baseline_comparison.py --data-root ./test_5k_db/ --output-dir ./baseline_results/
+Usage Examples:
+    # Small dataset (5K train, 500 valid/test) - default
+    python run_baseline_comparison.py --data-root ./test_5k_db/ --output-dir ./results_5k/
+    
+    # Medium dataset (20K train, 2K valid/test)
+    python run_baseline_comparison.py --data-root ./data/ --output-dir ./results_20k/ \
+        --train-limit 20000 --valid-limit 2000 --test-limit 2000 --epochs 15
+    
+    # Full dataset (no limits)
+    python run_baseline_comparison.py --data-root ./data/ --output-dir ./results_full/ \
+        --train-limit -1 --valid-limit -1 --test-limit -1 --epochs 20 --batch-size 512
+    
+    # Quick test with just 2 models
+    python run_baseline_comparison.py --data-root ./test_5k_db/ --output-dir ./quick_test/ \
+        --models transe complex --quick-mode
 """
 
 import argparse
@@ -299,8 +312,15 @@ class BaselineTrainer:
         return compute_ranking_metrics(ranks)
 
 
-def load_data_for_baselines(data_root: str) -> tuple:
-    """Load data in format suitable for baseline models"""
+def load_data_for_baselines(data_root: str, train_limit: int = None, valid_limit: int = None, test_limit: int = None) -> tuple:
+    """Load data in format suitable for baseline models
+    
+    Args:
+        data_root: Root directory with processed data
+        train_limit: Maximum training samples (None = no limit)
+        valid_limit: Maximum validation samples (None = no limit) 
+        test_limit: Maximum test samples (None = no limit)
+    """
     data_root = Path(data_root)
     mapping_dir = data_root / "mappings"
     
@@ -318,29 +338,34 @@ def load_data_for_baselines(data_root: str) -> tuple:
     dataset = LinkPropPredDataset(name='ogbl-biokg', root='./data/ogb/')
     split_edge = dataset.get_edge_split()
     
+    # Apply limits or use full dataset
+    train_end = train_limit if train_limit else len(split_edge['train']['head'])
+    valid_end = valid_limit if valid_limit else len(split_edge['valid']['head'])
+    test_end = test_limit if test_limit else len(split_edge['test']['head'])
+    
     # Convert to tensors
     train_triples = torch.from_numpy(
-        np.stack([split_edge['train']['head'][:5000],  # Use same 5K subset
-                 split_edge['train']['relation'][:5000],
-                 split_edge['train']['tail'][:5000]], axis=1)
+        np.stack([split_edge['train']['head'][:train_end],
+                 split_edge['train']['relation'][:train_end],
+                 split_edge['train']['tail'][:train_end]], axis=1)
     )
     
     valid_triples = torch.from_numpy(
-        np.stack([split_edge['valid']['head'][:500],  # Use same 500 subset
-                 split_edge['valid']['relation'][:500],
-                 split_edge['valid']['tail'][:500]], axis=1)
+        np.stack([split_edge['valid']['head'][:valid_end],
+                 split_edge['valid']['relation'][:valid_end],
+                 split_edge['valid']['tail'][:valid_end]], axis=1)
     )
     
     test_triples = torch.from_numpy(
-        np.stack([split_edge['test']['head'][:500],   # Use same 500 subset
-                 split_edge['test']['relation'][:500],
-                 split_edge['test']['tail'][:500]], axis=1)
+        np.stack([split_edge['test']['head'][:test_end],
+                 split_edge['test']['relation'][:test_end],
+                 split_edge['test']['tail'][:test_end]], axis=1)
     )
     
     return train_triples, valid_triples, test_triples, num_entities, num_relations
 
 
-def train_rasg_baseline(data_root: str, output_dir: str) -> dict:
+def train_rasg_baseline(data_root: str, output_dir: str, epochs: int = 10) -> dict:
     """Train RASG model for comparison"""
     print("\\n" + "="*50)
     print("Training RASG (Our Method)")
@@ -353,17 +378,17 @@ def train_rasg_baseline(data_root: str, output_dir: str) -> dict:
     rasg_output_dir = os.path.join(output_dir, "rasg_results")
     os.makedirs(rasg_output_dir, exist_ok=True)
     
-    # Run RASG training
+    # Run RASG training with same epochs as baselines
     cmd = [
         sys.executable, "main.py",
         "--data-root", data_root,
         "--output-dir", rasg_output_dir,
-        "--epochs", "10",  # Consistent with baselines
+        "--epochs", str(epochs),  # Use same epochs as baselines
         "--batch-size", "64",
         "--gnn-hidden", "128",  # Increased for better comparison
         "--num-layers", "3",    # Increased for better comparison
         "--lr", "0.001",
-        "--patience", "8"       # Increased patience for 10 epochs
+        "--patience", str(max(5, epochs//2))  # Adaptive patience
     ]
     
     print(f"Running RASG training: {' '.join(cmd)}")
@@ -403,7 +428,25 @@ def main():
     parser.add_argument("--models", nargs="+", default=["transe", "complex", "rotate", "rasg"], 
                        help="Models to train and compare")
     
+    # Dataset size configuration
+    parser.add_argument("--train-limit", type=int, default=5000, 
+                       help="Max training samples (default: 5000, use -1 for full dataset)")
+    parser.add_argument("--valid-limit", type=int, default=500,
+                       help="Max validation samples (default: 500, use -1 for full dataset)")
+    parser.add_argument("--test-limit", type=int, default=500,
+                       help="Max test samples (default: 500, use -1 for full dataset)")
+    
+    # Training configuration
+    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
+    parser.add_argument("--batch-size", type=int, default=256, help="Training batch size")
+    parser.add_argument("--eval-batch-size", type=int, default=50, help="Evaluation batch size")
+    
     args = parser.parse_args()
+    
+    # Handle -1 as unlimited
+    train_limit = None if args.train_limit == -1 else args.train_limit
+    valid_limit = None if args.valid_limit == -1 else args.valid_limit
+    test_limit = None if args.test_limit == -1 else args.test_limit
     
     print("🔬 RASG Baseline Comparison")
     print("="*60)
@@ -411,13 +454,17 @@ def main():
     print(f"Output dir: {args.output_dir}")
     print(f"Device: {args.device}")
     print(f"Models: {args.models}")
+    print(f"Dataset limits: Train={train_limit or 'Full'}, Valid={valid_limit or 'Full'}, Test={test_limit or 'Full'}")
+    print(f"Training: {args.epochs} epochs, batch_size={args.batch_size}")
     
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
     
     # Load data
     print("\\n📊 Loading data...")
-    train_triples, valid_triples, test_triples, num_entities, num_relations = load_data_for_baselines(args.data_root)
+    train_triples, valid_triples, test_triples, num_entities, num_relations = load_data_for_baselines(
+        args.data_root, train_limit, valid_limit, test_limit
+    )
     
     print(f"Dataset statistics:")
     print(f"  Entities: {num_entities}")
@@ -429,14 +476,14 @@ def main():
     # Initialize trainer
     trainer = BaselineTrainer(num_entities, num_relations, args.device)
     
-    # Initialize evaluator with smaller batch size to avoid OOM
+    # Initialize evaluator with configurable batch size
     evaluator = LinkPredictionEvaluator(
         train_triples=train_triples,
         valid_triples=valid_triples,
         test_triples=test_triples,
         num_entities=num_entities,
         num_relations=num_relations,
-        batch_size=50,  # Much smaller for 45K entities
+        batch_size=args.eval_batch_size,
         device=args.device
     )
     
@@ -444,15 +491,17 @@ def main():
     results = {}
     models = {}
     
-    # Adjust configs for quick mode  
-    epochs = 5 if args.quick_mode else 10  # Changed from 20 to 10 for balanced comparison
+    # Use configured epochs or quick mode
+    epochs = 5 if args.quick_mode else args.epochs
     
     if "transe" in args.models:
         # Train TransE
         config = get_transe_config('ogbl-biokg')
         config['epochs'] = epochs
-        config['batch_size'] = 256  # Optimized for 5K dataset
-        config['embedding_dim'] = 400  # Optimized for 5K dataset
+        config['batch_size'] = args.batch_size
+        # Scale embedding dimension based on dataset size
+        embed_dim = min(400, max(200, len(train_triples) // 20))  # Adaptive sizing
+        config['embedding_dim'] = embed_dim
         config['learning_rate'] = 0.005  # Higher for faster convergence
         config['margin'] = 5.0  # Reduced margin for smaller dataset
         config['regularization'] = 1e-6  # Reduced regularization
@@ -476,8 +525,10 @@ def main():
         # Train ComplEx
         config = get_complex_config('ogbl-biokg')
         config['epochs'] = epochs
-        config['batch_size'] = 256  # Optimized for 5K dataset
-        config['embedding_dim'] = 200  # Per component, reduced for stability
+        config['batch_size'] = args.batch_size
+        # Scale embedding dimension based on dataset size
+        embed_dim = min(200, max(100, len(train_triples) // 40))  # Per component
+        config['embedding_dim'] = embed_dim
         config['learning_rate'] = 0.01   # Much higher for ComplEx convergence
         config['regularization'] = 1e-7  # Much lower regularization
         config['negative_ratio'] = 5     # Increased negatives for better learning
@@ -501,12 +552,14 @@ def main():
         # Train RotatE
         config = get_rotate_config('ogbl-biokg')
         config['epochs'] = epochs
-        config['batch_size'] = 256  # Optimized for 5K dataset
-        config['embedding_dim'] = 400  # Total complex embedding dimension
+        config['batch_size'] = args.batch_size
+        # Scale embedding dimension based on dataset size
+        embed_dim = min(400, max(200, len(train_triples) // 20))  # Total complex dimension
+        config['embedding_dim'] = embed_dim
         config['negative_ratio'] = 10  # Balanced negatives
         config['learning_rate'] = 0.002  # Conservative for RotatE stability
         config['loss_type'] = 'margin'   # Use simpler margin loss instead of adversarial
-        config['margin'] = 3.0          # Smaller margin for 5K dataset
+        config['margin'] = 3.0          # Smaller margin for smaller datasets
         config['regularization'] = 1e-6  # Reduced regularization
         
         start_time = time.time()
@@ -527,7 +580,7 @@ def main():
     if "rasg" in args.models:
         # Train RASG
         print(f"\\n⚠️  RASG training may take 30-60 minutes...")
-        rasg_results = train_rasg_baseline(args.data_root, args.output_dir)
+        rasg_results = train_rasg_baseline(args.data_root, args.output_dir, epochs)
         if rasg_results:
             results['RASG'] = rasg_results
         else:
