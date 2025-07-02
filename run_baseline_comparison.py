@@ -31,7 +31,7 @@ from evaluation import LinkPredictionEvaluator, compute_ranking_metrics, format_
 # Import RASG for comparison
 from model.model import RASG
 from trainer.trainer import run_training
-from extraction.datasets import SubgraphDataset
+from extraction.datasets import SubGraphDataset
 
 
 class BaselineTrainer:
