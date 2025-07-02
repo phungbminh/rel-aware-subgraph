@@ -68,7 +68,7 @@ class BaselineTrainer:
         train_loader = self.create_triple_dataset(train_triples, config['batch_size'])
         
         best_mrr = 0
-        patience = 10
+        patience = 5  # Reduced patience for 10 epochs
         no_improve = 0
         
         for epoch in range(config['epochs']):
@@ -94,8 +94,8 @@ class BaselineTrainer:
             
             avg_loss = total_loss / num_batches
             
-            # Validation every 5 epochs
-            if (epoch + 1) % 5 == 0:
+            # Validation every 2 epochs for better early stopping
+            if (epoch + 1) % 2 == 0:
                 val_metrics = self._quick_evaluate(model, valid_triples[:500])  # Quick eval
                 val_mrr = val_metrics['mrr']
                 
@@ -140,7 +140,7 @@ class BaselineTrainer:
         train_loader = self.create_triple_dataset(train_triples, config['batch_size'])
         
         best_mrr = 0
-        patience = 10
+        patience = 5  # Reduced patience for 10 epochs
         no_improve = 0
         
         for epoch in range(config['epochs']):
@@ -166,8 +166,8 @@ class BaselineTrainer:
             
             avg_loss = total_loss / num_batches
             
-            # Validation every 5 epochs
-            if (epoch + 1) % 5 == 0:
+            # Validation every 2 epochs for better early stopping
+            if (epoch + 1) % 2 == 0:
                 val_metrics = self._quick_evaluate(model, valid_triples[:500])
                 val_mrr = val_metrics['mrr']
                 
@@ -211,7 +211,7 @@ class BaselineTrainer:
         train_loader = self.create_triple_dataset(train_triples, config['batch_size'])
         
         best_mrr = 0
-        patience = 10
+        patience = 5  # Reduced patience for 10 epochs
         no_improve = 0
         
         for epoch in range(config['epochs']):
@@ -228,7 +228,7 @@ class BaselineTrainer:
                 )
                 
                 optimizer.zero_grad()
-                loss, _, _ = model.forward_with_loss(batch_triples, neg_triples, config.get('loss_type', 'adversarial'))
+                loss, _, _ = model.forward_with_loss(batch_triples, neg_triples, config.get('loss_type', 'margin'))
                 loss.backward()
                 optimizer.step()
                 
@@ -237,8 +237,8 @@ class BaselineTrainer:
             
             avg_loss = total_loss / num_batches
             
-            # Validation every 5 epochs
-            if (epoch + 1) % 5 == 0:
+            # Validation every 2 epochs for better early stopping
+            if (epoch + 1) % 2 == 0:
                 val_metrics = self._quick_evaluate(model, valid_triples[:500])
                 val_mrr = val_metrics['mrr']
                 
@@ -267,8 +267,8 @@ class BaselineTrainer:
         ranks = []
         
         with torch.no_grad():
-            # Sample much smaller set to avoid OOM
-            num_samples = min(len(test_triples), 20)  # Reduced from 100
+            # Sample larger set for more stable validation
+            num_samples = min(len(test_triples), 50)  # Increased for stability
             sample_indices = torch.randperm(len(test_triples))[:num_samples]
             
             for i in sample_indices:
@@ -276,10 +276,10 @@ class BaselineTrainer:
                 h, r, t = triple[0, 0], triple[0, 1], triple[0, 2]
                 
                 # Score subset of entities to avoid OOM
-                num_candidates = min(1000, self.num_entities)  # Score only 1K entities
+                num_candidates = min(2000, self.num_entities)  # Increased candidates for better evaluation
                 candidate_entities = torch.randperm(self.num_entities)[:num_candidates].to(self.device)
                 
-                # Add true tail to candidates
+                # Ensure true tail is always in candidates
                 if t not in candidate_entities:
                     candidate_entities[0] = t  # Replace first candidate with true tail
                 
@@ -292,7 +292,9 @@ class BaselineTrainer:
                 true_idx = (candidate_entities == t).nonzero(as_tuple=True)[0][0]
                 true_score = scores[true_idx]
                 rank = (scores > true_score).sum().item() + 1
-                ranks.append(rank)
+                # Normalize rank by number of candidates for comparable metrics
+                normalized_rank = rank / len(candidate_entities) * self.num_entities
+                ranks.append(normalized_rank)
         
         return compute_ranking_metrics(ranks)
 
@@ -450,8 +452,10 @@ def main():
         config = get_transe_config('ogbl-biokg')
         config['epochs'] = epochs
         config['batch_size'] = 256  # Optimized for 5K dataset
-        config['embedding_dim'] = 500  # Reduced from 2000 for 5K dataset
-        config['learning_rate'] = 0.001  # Slightly higher for smaller dataset
+        config['embedding_dim'] = 400  # Optimized for 5K dataset
+        config['learning_rate'] = 0.005  # Higher for faster convergence
+        config['margin'] = 5.0  # Reduced margin for smaller dataset
+        config['regularization'] = 1e-6  # Reduced regularization
         
         start_time = time.time()
         transe_model = trainer.train_transe(train_triples, valid_triples, config, args.output_dir)
@@ -473,8 +477,10 @@ def main():
         config = get_complex_config('ogbl-biokg')
         config['epochs'] = epochs
         config['batch_size'] = 256  # Optimized for 5K dataset
-        config['embedding_dim'] = 250  # Per component (total = 500)
-        config['learning_rate'] = 0.001  # Slightly higher for smaller dataset
+        config['embedding_dim'] = 200  # Per component, reduced for stability
+        config['learning_rate'] = 0.01   # Much higher for ComplEx convergence
+        config['regularization'] = 1e-7  # Much lower regularization
+        config['negative_ratio'] = 5     # Increased negatives for better learning
         
         start_time = time.time()
         complex_model = trainer.train_complex(train_triples, valid_triples, config, args.output_dir)
@@ -496,9 +502,12 @@ def main():
         config = get_rotate_config('ogbl-biokg')
         config['epochs'] = epochs
         config['batch_size'] = 256  # Optimized for 5K dataset
-        config['embedding_dim'] = 500  # Total complex embedding dimension
-        config['negative_ratio'] = 20  # Increased for better RotatE performance
-        config['learning_rate'] = 0.001  # Slightly higher for smaller dataset
+        config['embedding_dim'] = 400  # Total complex embedding dimension
+        config['negative_ratio'] = 10  # Balanced negatives
+        config['learning_rate'] = 0.002  # Conservative for RotatE stability
+        config['loss_type'] = 'margin'   # Use simpler margin loss instead of adversarial
+        config['margin'] = 3.0          # Smaller margin for 5K dataset
+        config['regularization'] = 1e-6  # Reduced regularization
         
         start_time = time.time()
         rotate_model = trainer.train_rotate(train_triples, valid_triples, config, args.output_dir)
