@@ -300,8 +300,12 @@ def main():
     parser.add_argument("--tau", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--batch-size", type=int, default=100)
-    parser.add_argument("--max-triples", type=int, default=None)
-    parser.add_argument("--max-eval-triples", type=int, default=None)
+    parser.add_argument("--max-triples", type=int, default=None,
+                        help="Max training triples (None for full dataset)")
+    parser.add_argument("--max-eval-triples", type=int, default=None,
+                        help="Max eval triples (None for full dataset)")
+    parser.add_argument("--use-full-dataset", action="store_true",
+                        help="Use full OGB-BioKG dataset (ignores max-triples)")
     parser.add_argument("--num-negatives", type=int, default=2)
     parser.add_argument("--undirected", action="store_true", help="If set, build undirected graph (default: directed)")
     parser.add_argument("--rel-degree-dense", action="store_true", help="Convert relation degree to dense (faster, use more RAM)")
@@ -387,8 +391,11 @@ def main():
         split_edge['train']['relation'],
         split_edge['train']['tail']
     ], axis=1).astype(np.int32)
-    if args.max_triples and len(train_triples) > args.max_triples:
+    if not args.use_full_dataset and args.max_triples and len(train_triples) > args.max_triples:
         train_triples = train_triples[:args.max_triples]
+        logger.info(f"Limited training triples to {args.max_triples}")
+    else:
+        logger.info(f"Using full training set: {len(train_triples)} triples")
     train_output = os.path.join(args.output_dir, "train.lmdb")
     train_count = parallel_extraction(
         train_triples, csr_graph, rel_degree, rel_degree_dense, args.rel_degree_dense,
@@ -404,8 +411,11 @@ def main():
             split_edge[split]['relation'],
             split_edge[split]['tail']
         ], axis=1).astype(np.int32)
-        if args.max_eval_triples and len(split_triples) > args.max_eval_triples:
+        if not args.use_full_dataset and args.max_eval_triples and len(split_triples) > args.max_eval_triples:
             split_triples = split_triples[:args.max_eval_triples]
+            logger.info(f"Limited {split} triples to {args.max_eval_triples}")
+        else:
+            logger.info(f"Using full {split} set: {len(split_triples)} triples")
         all_triples = [split_triples]
         for negs in negative_sample_batches(split_triples, args.num_negatives, num_nodes, args.batch_size):
             all_triples.append(negs)

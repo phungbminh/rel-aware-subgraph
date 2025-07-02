@@ -72,6 +72,8 @@ def get_args():
                         help="Number of negative samples per positive (for evaluation)")
     parser.add_argument("--num-train-negatives", type=int, default=1,
                         help="Number of negative samples per positive during training")
+    parser.add_argument("--use-full-dataset", action="store_true",
+                        help="Use full dataset (auto-adjust memory settings)")
 
     # ========== Training Arguments ==========
     parser.add_argument("--epochs", type=int, default=50,
@@ -134,9 +136,59 @@ def log_args(args, logger=None):
     else:
         print(msg)
 
+def auto_adjust_for_full_dataset(args):
+    """Auto-adjust parameters for full dataset training"""
+    if args.use_full_dataset:
+        # Detect GPU setup
+        import torch
+        num_gpus = torch.cuda.device_count()
+        gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9 if num_gpus > 0 else 0
+        
+        print(f"[INFO] Detected {num_gpus} GPUs, {gpu_memory:.1f}GB each")
+        
+        if num_gpus >= 2 and gpu_memory >= 15:
+            # Multi-GPU setup (2x T4 16GB)
+            print("[AUTO] Multi-GPU detected, using aggressive settings")
+            if args.batch_size < 16:
+                print(f"[AUTO] Increasing batch-size from {args.batch_size} to 16 for multi-GPU")
+                args.batch_size = 16
+            
+            if args.num_train_negatives < 2:
+                print(f"[AUTO] Increasing num-train-negatives from {args.num_train_negatives} to 2 for multi-GPU")
+                args.num_train_negatives = 2
+                
+            if args.num_workers < 6:
+                print(f"[AUTO] Increasing num-workers from {args.num_workers} to 6 for multi-GPU")
+                args.num_workers = 6
+                
+        else:
+            # Single GPU setup (P100 16GB)
+            print("[AUTO] Single GPU detected, using conservative settings")
+            if args.batch_size > 8:
+                print(f"[AUTO] Reducing batch-size from {args.batch_size} to 8 for single GPU")
+                args.batch_size = 8
+            
+            if args.num_train_negatives > 1:
+                print(f"[AUTO] Reducing num-train-negatives from {args.num_train_negatives} to 1 for single GPU")
+                args.num_train_negatives = 1
+                
+            if args.num_workers > 2:
+                print(f"[AUTO] Reducing num-workers from {args.num_workers} to 2 for single GPU")
+                args.num_workers = 2
+        
+        # Increase patience for full dataset
+        if args.patience < 15:
+            print(f"[AUTO] Increasing patience from {args.patience} to 15 for full dataset")
+            args.patience = 15
+            
+        print("[AUTO] Applied full dataset optimizations")
+    
+    return args
+
 def main():
     # ===== Khởi tạo =====
     args = get_args()
+    args = auto_adjust_for_full_dataset(args)  # Auto-adjust for full dataset
     setup_directories(args)
     set_seed(args.seed)
 

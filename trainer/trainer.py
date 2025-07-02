@@ -258,11 +258,15 @@ def run_training(
     # Use dynamic batching for better memory utilization
     from utils import FixedSizeBatchSampler
     
+    # Check if using full dataset
+    is_full_dataset = len(train_dataset) > 1000  # Heuristic for full dataset
+    
     train_sampler = FixedSizeBatchSampler(
         train_dataset, 
         max_batch_size=batch_size,
         max_nodes_per_batch=20000,  # Adjust based on GPU memory
-        shuffle=True
+        shuffle=True,
+        is_full_dataset=is_full_dataset
     )
     
     train_loader = DataLoader(
@@ -276,14 +280,16 @@ def run_training(
         valid_dataset,
         max_batch_size=min(batch_size * 2, 64),
         max_nodes_per_batch=15000,
-        shuffle=False
+        shuffle=False,
+        is_full_dataset=is_full_dataset
     )
     
     test_sampler = FixedSizeBatchSampler(
         test_dataset,
         max_batch_size=min(batch_size * 2, 64), 
         max_nodes_per_batch=15000,
-        shuffle=False
+        shuffle=False,
+        is_full_dataset=is_full_dataset
     )
     
     valid_loader = DataLoader(
@@ -313,13 +319,26 @@ def run_training(
     #     print(f"[DEBUG][run_training] Using {torch.cuda.device_count()} GPUs with DataParallel!")
     # model = model.to(device)
 
-    if "WORLD_SIZE" in os.environ and int(os.environ["WORLD_SIZE"]) > 1:
-        dist.init_process_group(backend="nccl")
-        local_rank = int(os.environ["LOCAL_RANK"])
-        device = torch.device(f"cuda:{local_rank}")
-        model = model.to(device)
-        model = DDP(model, device_ids=[local_rank])
-        print(f"[DEBUG][run_training] Using DistributedDataParallel on {torch.cuda.device_count()} GPUs!")
+    # Multi-GPU setup with improved detection
+    if torch.cuda.device_count() > 1:
+        if "WORLD_SIZE" in os.environ and int(os.environ["WORLD_SIZE"]) > 1:
+            # Distributed training (multiple nodes)
+            dist.init_process_group(backend="nccl")
+            local_rank = int(os.environ["LOCAL_RANK"])
+            device = torch.device(f"cuda:{local_rank}")
+            model = model.to(device)
+            model = DDP(model, device_ids=[local_rank])
+            print(f"[INFO] Using DistributedDataParallel on {torch.cuda.device_count()} GPUs across nodes!")
+        else:
+            # Single node, multiple GPUs
+            print(f"[INFO] Found {torch.cuda.device_count()} GPUs, using DataParallel")
+            model = model.to(device)
+            if torch.cuda.device_count() == 2:
+                # Optimal for 2x T4
+                model = torch.nn.DataParallel(model, device_ids=[0, 1])
+                print("[INFO] Optimized DataParallel setup for 2x T4 Tesla")
+            else:
+                model = torch.nn.DataParallel(model)
     else:
         model = model.to(device)
 
