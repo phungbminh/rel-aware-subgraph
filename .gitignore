@@ -4,3 +4,4 @@
 /.venv/
 /debug_subgraph_db/
 /cache/
+/subgraph_db/

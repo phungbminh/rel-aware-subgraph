@@ -75,20 +75,19 @@ class RuntimeNegativeSampler:
     
     def _create_negative_graph(self, pos_graph, new_head, new_tail, head_idx, tail_idx):
         """Create negative graph by replacing head/tail in original graph"""
-        # Copy original graph structure
-        neg_graph = Data(
-            x=pos_graph.x.clone(),
-            edge_index=pos_graph.edge_index.clone(),
-            head_idx=head_idx,
-            tail_idx=tail_idx,
-            relation_label=pos_graph.relation_label,
-            num_nodes=pos_graph.num_nodes
-        )
+        # Use deepcopy approach to ensure all attributes are copied
+        import copy
+        neg_graph = copy.deepcopy(pos_graph)
         
-        # Update original_nodes to reflect the corruption
-        neg_graph.original_nodes = pos_graph.original_nodes.clone()
+        # Update the corrupted entities
         neg_graph.original_nodes[head_idx] = new_head
         neg_graph.original_nodes[tail_idx] = new_tail
+        
+        # Update masks for new head/tail
+        neg_graph.head_mask.fill_(False)
+        neg_graph.tail_mask.fill_(False)
+        neg_graph.head_mask[head_idx] = True
+        neg_graph.tail_mask[tail_idx] = True
         
         # Note: We keep the same graph structure (nodes, edges) but change the semantic meaning
         # This is a simplification - ideally we'd rebuild the subgraph around new entities

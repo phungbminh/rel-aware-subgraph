@@ -169,10 +169,18 @@ def train_binary_classification(model, pos_graphs, relations, negative_sampler,
         print(f"[DEBUG][Binary] Pos: {len(pos_graphs)}, Neg: {len(neg_graphs)}")
     
     # Forward pass
-    batch_all = Batch.from_data_list(all_graphs).to(device)
-    batch_r = torch.tensor(all_relations, device=device)
-    
-    scores = model(batch_all, batch_r)  # Shape: (total_graphs,)
+    try:
+        batch_all = Batch.from_data_list(all_graphs).to(device)
+        batch_r = torch.tensor(all_relations, device=device)
+        
+        scores = model(batch_all, batch_r)  # Shape: (total_graphs,)
+    except Exception as e:
+        if is_debug:
+            print(f"[DEBUG][Binary] Error in batching: {e}")
+            print(f"[DEBUG][Binary] Pos graph keys: {list(pos_graphs[0].keys())}")
+            if len(neg_graphs) > 0:
+                print(f"[DEBUG][Binary] Neg graph keys: {list(neg_graphs[0].keys())}")
+        raise e
     
     # Binary cross-entropy loss
     loss = F.binary_cross_entropy_with_logits(scores, all_labels, reduction='mean')
