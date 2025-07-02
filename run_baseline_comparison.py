@@ -357,7 +357,7 @@ def train_rasg_baseline(data_root: str, output_dir: str) -> dict:
         "--data-root", data_root,
         "--output-dir", rasg_output_dir,
         "--epochs", "10",  # Consistent with baselines
-        "--batch-size", "16", 
+        "--batch-size", "96",
         "--gnn-hidden", "128",  # Increased for better comparison
         "--num-layers", "3",    # Increased for better comparison
         "--lr", "0.001",
