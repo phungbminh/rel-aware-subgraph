@@ -129,6 +129,9 @@ class RASG(nn.Module):
         self.node_emb = NodeLabelEmbedding(max_dist, node_emb_dim, dropout)
         self.rel_emb = RelationEmbedding(num_rels, rel_emb_dim, dropout)
         self.input_dim = node_emb_dim + rel_emb_dim
+        
+        # Project edge embeddings to match node feature dimension for CompGCN
+        self.edge_proj = nn.Linear(rel_emb_dim, self.input_dim) if rel_emb_dim != self.input_dim else nn.Identity()
         self.gnn_layers = nn.ModuleList([
             CompGCNConv(self.input_dim if i == 0 else gnn_hidden, gnn_hidden, composition, dropout)
             for i in range(num_layers)
@@ -167,7 +170,11 @@ class RASG(nn.Module):
         rel_feat = self.rel_emb(rel_input)
 
         h = torch.cat([x, rel_feat], dim=-1)         # (N, in_dim)
-        edge_emb = self.rel_emb(data.edge_attr) if hasattr(data, 'edge_attr') and data.edge_attr is not None else None
+        if hasattr(data, 'edge_attr') and data.edge_attr is not None:
+            edge_emb = self.rel_emb(data.edge_attr)
+            edge_emb = self.edge_proj(edge_emb)  # Project to match node dimension
+        else:
+            edge_emb = None
 
         # Multi-layer GNN
         for i, (layer, norm) in enumerate(zip(self.gnn_layers, self.norms)):

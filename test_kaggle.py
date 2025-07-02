@@ -79,12 +79,16 @@ def test_small_batch():
                    head_idx=head_idx, tail_idx=tail_idx)
         batch = Batch.from_data_list([data])
         
-        # Create model  
+        # Create model - ensure consistent dimensions
+        node_emb_dim = 16
+        rel_emb_dim = 16
+        input_dim = node_emb_dim + rel_emb_dim  # 32
+        
         model = RASG(
             num_rels=num_relations,
-            node_emb_dim=16,
-            rel_emb_dim=16,
-            gnn_hidden=32,
+            node_emb_dim=node_emb_dim,
+            rel_emb_dim=rel_emb_dim,
+            gnn_hidden=input_dim,  # Must match input_dim for CompGCN
             att_dim=32,
             num_layers=2
         )
