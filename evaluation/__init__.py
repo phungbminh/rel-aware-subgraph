@@ -4,7 +4,7 @@ Provides standardized evaluation protocols for fair comparison
 """
 
 from .evaluator import LinkPredictionEvaluator, FilteredRankingEvaluator
-from .metrics import compute_mrr, compute_hits_at_k, compute_ranking_metrics
+from .metrics import compute_mrr, compute_hits_at_k, compute_ranking_metrics, format_results, create_results_table
 
 # Optional imports (won't break if utils not available)
 try:
@@ -18,7 +18,9 @@ __all__ = [
     'FilteredRankingEvaluator',
     'compute_mrr', 
     'compute_hits_at_k', 
-    'compute_ranking_metrics'
+    'compute_ranking_metrics',
+    'format_results',
+    'create_results_table'
 ]
 
 # Add utils functions if available
