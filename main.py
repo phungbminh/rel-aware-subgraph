@@ -69,7 +69,9 @@ def get_args():
     parser.add_argument("--global-graph", type=str, default="global_graph.pkl",
                         help="Path to global CSR graph")
     parser.add_argument("--num-negatives", type=int, default=5,
-                        help="Number of negative samples per positive")
+                        help="Number of negative samples per positive (for evaluation)")
+    parser.add_argument("--num-train-negatives", type=int, default=1,
+                        help="Number of negative samples per positive during training")
 
     # ========== Training Arguments ==========
     parser.add_argument("--epochs", type=int, default=50,
@@ -220,6 +222,7 @@ def main():
         patience=args.patience,
         num_workers=args.num_workers,
         checkpoint_path=checkpoint_path,
+        num_train_negatives=args.num_train_negatives,
         is_debug=args.is_debug
     )
 

@@ -70,7 +70,7 @@ def preprocess_batch(batch, device, is_debug=False):
     return batch_all, batch_r, batch_size, num_negs
 
 def train_one_epoch(model, loader, optimizer, device, margin=1.0, max_grad_norm=1.0, 
-                   accumulation_steps=1, is_debug=False):
+                   accumulation_steps=1, negative_sampler=None, num_train_negatives=1, is_debug=False):
     model.train()
     total_loss, n_samples = 0, 0
     optimizer.zero_grad(set_to_none=True)
@@ -83,21 +83,34 @@ def train_one_epoch(model, loader, optimizer, device, margin=1.0, max_grad_norm=
             if is_debug and step < 2:
                 print(f"[DEBUG][train_one_epoch] Got batch {step}")
             
-            batch_all, batch_r, batch_size, num_negs = preprocess_batch(batch, device, is_debug=(is_debug and step < 2))
-
-            if is_debug and step < 2:
-                print(f"[DEBUG][train_one_epoch] batch_size: {batch_size}, num_negs: {num_negs}")
-                print(f"[DEBUG][train_one_epoch] nodes in batch: {batch_all.x.shape[0] if hasattr(batch_all, 'x') else 'N/A'}")
+            pos_graphs, relations, neg_graphs_list, num_negs = batch
             
-            scores = model(batch_all, batch_r).reshape(batch_size, 1 + num_negs)
-            scores_pos, scores_neg = scores[:, 0].unsqueeze(1), scores[:, 1:]
+            # Check if this is training (no pre-computed negatives) or evaluation
+            is_training_batch = num_negs == 0
             
-            loss = F.margin_ranking_loss(
-                scores_pos.expand_as(scores_neg),
-                scores_neg,
-                target=torch.ones_like(scores_neg),
-                margin=margin, reduction='sum'
-            )
+            if is_training_batch and negative_sampler is not None:
+                # Training: Use binary classification with runtime negative sampling
+                loss = train_binary_classification(
+                    model, pos_graphs, relations, negative_sampler, 
+                    num_train_negatives, device, is_debug and step < 2
+                )
+            else:
+                # Evaluation or training with pre-computed negatives: Use ranking loss
+                batch_all, batch_r, batch_size, num_negs = preprocess_batch(batch, device, is_debug=(is_debug and step < 2))
+                
+                if num_negs == 0:
+                    # Skip if no negatives available
+                    continue
+                    
+                scores = model(batch_all, batch_r).reshape(batch_size, 1 + num_negs)
+                scores_pos, scores_neg = scores[:, 0].unsqueeze(1), scores[:, 1:]
+                
+                loss = F.margin_ranking_loss(
+                    scores_pos.expand_as(scores_neg),
+                    scores_neg,
+                    target=torch.ones_like(scores_neg),
+                    margin=margin, reduction='mean'
+                )
             
             # Scale loss for gradient accumulation
             loss = loss / accumulation_steps
@@ -110,16 +123,15 @@ def train_one_epoch(model, loader, optimizer, device, margin=1.0, max_grad_norm=
                 optimizer.zero_grad(set_to_none=True)
             
             total_loss += loss.item() * accumulation_steps
-            n_samples += batch_size
+            n_samples += len(pos_graphs)
             
             # Memory cleanup
-            del batch_all, batch_r, scores, loss
             if step % 10 == 0:
                 torch.cuda.empty_cache()
                 
         except RuntimeError as e:
             if "out of memory" in str(e):
-                print(f"[WARNING] OOM at step {step}, skipping batch. Batch size: {batch_size}")
+                print(f"[WARNING] OOM at step {step}, skipping batch")
                 if hasattr(torch.cuda, 'empty_cache'):
                     torch.cuda.empty_cache()
                 continue
@@ -129,6 +141,43 @@ def train_one_epoch(model, loader, optimizer, device, margin=1.0, max_grad_norm=
     if is_debug:
         print("[DEBUG][train_one_epoch] End training")
     return total_loss / n_samples
+
+def train_binary_classification(model, pos_graphs, relations, negative_sampler, 
+                               num_negatives, device, is_debug=False):
+    """
+    Train with binary classification loss following RGCN/CompGCN style.
+    """
+    # Sample negative graphs
+    neg_graphs, neg_relations = negative_sampler.sample_negatives(
+        pos_graphs, relations, num_negatives
+    )
+    
+    if len(neg_graphs) == 0:
+        # Fallback if no negatives could be sampled
+        return torch.tensor(0.0, device=device, requires_grad=True)
+    
+    # Combine positive and negative graphs
+    all_graphs = pos_graphs + neg_graphs
+    all_relations = relations + neg_relations
+    
+    # Create labels: 1 for positive, 0 for negative
+    pos_labels = torch.ones(len(pos_graphs), device=device)
+    neg_labels = torch.zeros(len(neg_graphs), device=device)
+    all_labels = torch.cat([pos_labels, neg_labels])
+    
+    if is_debug:
+        print(f"[DEBUG][Binary] Pos: {len(pos_graphs)}, Neg: {len(neg_graphs)}")
+    
+    # Forward pass
+    batch_all = Batch.from_data_list(all_graphs).to(device)
+    batch_r = torch.tensor(all_relations, device=device)
+    
+    scores = model(batch_all, batch_r)  # Shape: (total_graphs,)
+    
+    # Binary cross-entropy loss
+    loss = F.binary_cross_entropy_with_logits(scores, all_labels, reduction='mean')
+    
+    return loss
 
 @torch.no_grad()
 def evaluate(model, loader, device, is_debug=False):
@@ -184,6 +233,7 @@ def run_training(
     num_workers=0,         # NÊN để 0 nếu dùng LMDB!
     checkpoint_path=None,
     logger=None,
+    num_train_negatives=1, # Number of negatives per positive in training
     is_debug=False
 ):
     pin_memory = torch.cuda.is_available() and str(device).startswith("cuda")
@@ -239,7 +289,15 @@ def run_training(
         **loader_kwargs
     )
     if is_debug:
-        print(f"[DEBUG][run_training] Loader created. Pin memory: {pin_memory}, num_workers: {num_workers}")
+        print(f"[DEBUG][run_training] Loader created. Pin memory: {pin_memory}, num_workers: {optimal_workers}")
+
+    # Setup negative sampler for training
+    from .negative_sampler import RuntimeNegativeSampler
+    all_entities = list(train_dataset.entity2id.keys())
+    negative_sampler = RuntimeNegativeSampler(all_entities, corruption_rate=0.5)
+    
+    if is_debug:
+        print(f"[DEBUG][run_training] Created negative sampler with {len(all_entities)} entities")
 
     # if torch.cuda.device_count() > 1 and str(device).startswith("cuda"):
     #     #model = torch.nn.DataParallel(model)
@@ -274,7 +332,7 @@ def run_training(
         # Use gradient accumulation for memory efficiency
         accumulation_steps = 2 if torch.cuda.get_device_properties(0).total_memory < 20e9 else 1
         train_loss = train_one_epoch(model, train_loader, optimizer, device, margin, max_grad_norm, 
-                                   accumulation_steps, is_debug=is_debug)
+                                   accumulation_steps, negative_sampler, num_train_negatives, is_debug=is_debug)
         if is_debug:
             print(f"[DEBUG][run_training] Epoch {epoch}: train_loss = {train_loss}")
         history['train_loss'].append(train_loss)
