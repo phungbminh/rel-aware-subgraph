@@ -66,7 +66,7 @@ def get_args():
                         help="LMDB path for validation data")
     parser.add_argument("--test-db", type=str, default="test.lmdb",
                         help="LMDB path for test data")
-    parser.add_argument("--global-graph", type=str, default="global_graph.pkl",
+    parser.add_argument("--global-graph", type=str, default="mappings/global_graph.pkl",
                         help="Path to global CSR graph")
     parser.add_argument("--num-negatives", type=int, default=5,
                         help="Number of negative samples per positive (for evaluation)")

@@ -374,9 +374,10 @@ def main():
 
     logger.info("Creating CSR graph...")
     csr_graph = CSRGraph(edge_index, num_nodes)
-    with open(os.path.join(args.output_dir + "/mappings", "global_graph.pkl"), "wb") as f:
+    global_graph_path = os.path.join(args.output_dir, "mappings", "global_graph.pkl")
+    with open(global_graph_path, "wb") as f:
         pickle.dump(csr_graph, f)
-    print(f"[INFO] Saved global graph to {os.path.join(args.output_dir, 'global_graph.pkl')}")
+    print(f"[INFO] Saved global graph to {global_graph_path}")
 
     logger.info("Computing relation degrees (sparse)...")
     # rel_degree = compute_relation_degree_sparse(all_triples, num_nodes, num_relations)

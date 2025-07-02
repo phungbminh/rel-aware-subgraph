@@ -343,12 +343,12 @@ def train_rasg_baseline(data_root: str, output_dir: str) -> dict:
         sys.executable, "main.py",
         "--data-root", data_root,
         "--output-dir", rasg_output_dir,
-        "--epochs", "10",  # Reduced for comparison
-        "--batch-size", "16",
-        "--gnn-hidden", "64",
-        "--num-layers", "2",
+        "--epochs", "10",  # Consistent with baselines
+        "--batch-size", "16", 
+        "--gnn-hidden", "128",  # Increased for better comparison
+        "--num-layers", "3",    # Increased for better comparison
         "--lr", "0.001",
-        "--patience", "5"
+        "--patience", "8"       # Increased patience for 10 epochs
     ]
     
     print(f"Running RASG training: {' '.join(cmd)}")
@@ -418,14 +418,16 @@ def main():
     results = {}
     models = {}
     
-    # Adjust configs for quick mode
-    epochs = 5 if args.quick_mode else 20
+    # Adjust configs for quick mode  
+    epochs = 5 if args.quick_mode else 10  # Changed from 20 to 10 for balanced comparison
     
     if "transe" in args.models:
         # Train TransE
         config = get_transe_config('ogbl-biokg')
         config['epochs'] = epochs
-        config['batch_size'] = 128  # Smaller for 5K dataset
+        config['batch_size'] = 256  # Optimized for 5K dataset
+        config['embedding_dim'] = 500  # Reduced from 2000 for 5K dataset
+        config['learning_rate'] = 0.001  # Slightly higher for smaller dataset
         
         start_time = time.time()
         transe_model = trainer.train_transe(train_triples, valid_triples, config, args.output_dir)
@@ -444,8 +446,9 @@ def main():
         # Train ComplEx
         config = get_complex_config('ogbl-biokg')
         config['epochs'] = epochs
-        config['batch_size'] = 128
-        config['embedding_dim'] = 200  # Smaller for 5K dataset
+        config['batch_size'] = 256  # Optimized for 5K dataset
+        config['embedding_dim'] = 250  # Per component (total = 500)
+        config['learning_rate'] = 0.001  # Slightly higher for smaller dataset
         
         start_time = time.time()
         complex_model = trainer.train_complex(train_triples, valid_triples, config, args.output_dir)
@@ -464,9 +467,10 @@ def main():
         # Train RotatE
         config = get_rotate_config('ogbl-biokg')
         config['epochs'] = epochs
-        config['batch_size'] = 128
-        config['embedding_dim'] = 400  # Smaller for 5K dataset
-        config['negative_ratio'] = 10  # Reduced for faster training
+        config['batch_size'] = 256  # Optimized for 5K dataset
+        config['embedding_dim'] = 500  # Total complex embedding dimension
+        config['negative_ratio'] = 20  # Increased for better RotatE performance
+        config['learning_rate'] = 0.001  # Slightly higher for smaller dataset
         
         start_time = time.time()
         rotate_model = trainer.train_rotate(train_triples, valid_triples, config, args.output_dir)
