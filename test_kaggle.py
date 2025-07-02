@@ -66,18 +66,22 @@ def test_small_batch():
         num_relations = 5
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # Create dummy graph
-        x = torch.randn(num_nodes, 16)
+        # Create dummy graph - x should be node labels (distances)
+        x = torch.randint(0, 5, (num_nodes, 2))  # (s_dist, t_dist) for each node
         edge_index = torch.randint(0, num_nodes, (2, 20))
         edge_attr = torch.randint(0, num_relations, (20,))
         
-        data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+        # Add head/tail indices 
+        head_idx = torch.tensor([0])  # head node index
+        tail_idx = torch.tensor([1])  # tail node index
+        
+        data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, 
+                   head_idx=head_idx, tail_idx=tail_idx)
         batch = Batch.from_data_list([data])
         
-        # Create model
+        # Create model  
         model = RASG(
-            num_entities=100,
-            num_relations=num_relations,
+            num_rels=num_relations,
             node_emb_dim=16,
             rel_emb_dim=16,
             gnn_hidden=32,
@@ -128,15 +132,27 @@ def main():
     print("4. Use checkpointing for long training runs")
     
     if torch.cuda.is_available():
+        gpu_count = torch.cuda.device_count()
         gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
-        if gpu_memory >= 15:
-            print(f"\n🎯 Your GPU ({gpu_memory:.1f}GB) is suitable for:")
-            print("   - Full dataset training with batch_size=8-16")
-            print("   - Model dimensions: gnn_hidden=128, layers=3")
+        total_memory = gpu_memory * gpu_count
+        
+        print(f"\n🎯 GPU Setup: {gpu_count}x {torch.cuda.get_device_name(0)} ({total_memory:.1f}GB total)")
+        
+        if gpu_count >= 2 and gpu_memory >= 15:
+            print("✅ Perfect for 2x T4 Tesla setup!")
+            print("📋 Recommended settings:")
+            print("   - batch_size=16-32 (with current single-GPU fallback)")
+            print("   - gnn_hidden=128-256, layers=3-4")
+            print("   - Full dataset training: 2-3 days")
+            print("   - Test first with 5000 triples: ~30-60 minutes")
+        elif gpu_memory >= 15:
+            print("✅ Suitable for full dataset training:")
+            print("   - batch_size=8-16")
+            print("   - gnn_hidden=128, layers=3")
         else:
-            print(f"\n⚠️  Your GPU ({gpu_memory:.1f}GB) needs conservative settings:")
-            print("   - Reduce batch_size to 4-8")
-            print("   - Use gnn_hidden=64-96, layers=2")
+            print(f"⚠️  Conservative settings needed:")
+            print("   - batch_size=4-8")
+            print("   - gnn_hidden=64-96, layers=2")
     
     return True
 
