@@ -212,20 +212,27 @@ class RotatE(BaseKGEModel):
         
         Args:
             pos_triples: Positive triples [batch_size, 3]
-            neg_triples: Negative triples [batch_size, 3]
+            neg_triples: Negative triples [batch_size * neg_ratio, 3]
             
         Returns:
             loss: Margin-based loss
         """
-        pos_scores = self.forward(pos_triples)
-        neg_scores = self.forward(neg_triples)
+        pos_scores = self.forward(pos_triples)  # Higher = better
+        neg_scores = self.forward(neg_triples)  # Higher = better
         
-        # Convert scores back to distances for margin loss
-        pos_distances = self.margin - pos_scores
-        neg_distances = self.margin - neg_scores
+        # For margin ranking loss, we want: margin + neg_score - pos_score > 0
+        # This means pos_score should be higher than neg_score by at least margin
+        batch_size = pos_triples.size(0)
+        neg_ratio = neg_triples.size(0) // batch_size
         
-        # Margin ranking loss
-        loss = F.relu(self.epsilon + pos_distances - neg_distances).mean()
+        # Reshape negative scores to [batch_size, neg_ratio]
+        neg_scores = neg_scores.view(batch_size, neg_ratio)
+        
+        # Expand positive scores to match: [batch_size, neg_ratio]
+        pos_scores = pos_scores.unsqueeze(1).expand(-1, neg_ratio)
+        
+        # Standard margin ranking loss: max(0, margin - pos_score + neg_score)
+        loss = F.relu(self.margin - pos_scores + neg_scores).mean()
         
         # Add regularization
         reg_loss = self.regularization_loss()
