@@ -69,46 +69,63 @@ def preprocess_batch(batch, device, is_debug=False):
     batch_r = batch_r.to(device, **kwargs)
     return batch_all, batch_r, batch_size, num_negs
 
-def train_one_epoch(model, loader, optimizer, device, margin=1.0, max_grad_norm=1.0, is_debug=False):
+def train_one_epoch(model, loader, optimizer, device, margin=1.0, max_grad_norm=1.0, 
+                   accumulation_steps=1, is_debug=False):
     model.train()
     total_loss, n_samples = 0, 0
+    optimizer.zero_grad(set_to_none=True)
+    
     if is_debug:
         print("[DEBUG][train_one_epoch] Start training")
+    
     for step, batch in enumerate(tqdm(loader, desc='Training')):
-        print(torch.cuda.memory_allocated() / 1024 ** 3, "GB allocated")
-        print(torch.cuda.memory_reserved() / 1024 ** 3, "GB reserved")
-        if is_debug:
-            print(f"[DEBUG][train_one_epoch] Got batch {step}")
-        batch_all, batch_r, batch_size, num_negs = preprocess_batch(batch, device, is_debug=is_debug)
+        try:
+            if is_debug and step < 2:
+                print(f"[DEBUG][train_one_epoch] Got batch {step}")
+            
+            batch_all, batch_r, batch_size, num_negs = preprocess_batch(batch, device, is_debug=(is_debug and step < 2))
 
-        if step == 0 or is_debug:
-            print("[DEBUG][check] Model device:", next(model.parameters()).device)
-            if hasattr(batch_all, 'x'):
-                print("[DEBUG][check] batch_all.x device:", batch_all.x.device)
-            if hasattr(batch_all, 'edge_index'):
-                print("[DEBUG][check] batch_all.edge_index device:", batch_all.edge_index.device)
-            print("[DEBUG][check] batch_r device:", batch_r.device)
-
-        if is_debug:
-            print(f"[DEBUG][train_one_epoch] batch_all: {batch_all.x.shape if hasattr(batch_all, 'x') else None}, batch_r: {batch_r.shape}, batch_size: {batch_size}, num_negs: {num_negs}")
-        scores = model(batch_all, batch_r).reshape(batch_size, 1 + num_negs)
-        if is_debug:
-            print(f"[DEBUG][train_one_epoch] scores shape: {scores.shape}")
-        scores_pos, scores_neg = scores[:, 0].unsqueeze(1), scores[:, 1:]
-        loss = F.margin_ranking_loss(
-            scores_pos.expand_as(scores_neg),
-            scores_neg,
-            target=torch.ones_like(scores_neg),
-            margin=margin, reduction='sum'
-        )
-        if is_debug:
-            print(f"[DEBUG][train_one_epoch] loss: {loss.item()}")
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-        optimizer.step()
-        total_loss += loss.item()
-        n_samples += batch_size
+            if is_debug and step < 2:
+                print(f"[DEBUG][train_one_epoch] batch_size: {batch_size}, num_negs: {num_negs}")
+                print(f"[DEBUG][train_one_epoch] nodes in batch: {batch_all.x.shape[0] if hasattr(batch_all, 'x') else 'N/A'}")
+            
+            scores = model(batch_all, batch_r).reshape(batch_size, 1 + num_negs)
+            scores_pos, scores_neg = scores[:, 0].unsqueeze(1), scores[:, 1:]
+            
+            loss = F.margin_ranking_loss(
+                scores_pos.expand_as(scores_neg),
+                scores_neg,
+                target=torch.ones_like(scores_neg),
+                margin=margin, reduction='sum'
+            )
+            
+            # Scale loss for gradient accumulation
+            loss = loss / accumulation_steps
+            loss.backward()
+            
+            # Gradient accumulation
+            if (step + 1) % accumulation_steps == 0 or step == len(loader) - 1:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+            
+            total_loss += loss.item() * accumulation_steps
+            n_samples += batch_size
+            
+            # Memory cleanup
+            del batch_all, batch_r, scores, loss
+            if step % 10 == 0:
+                torch.cuda.empty_cache()
+                
+        except RuntimeError as e:
+            if "out of memory" in str(e):
+                print(f"[WARNING] OOM at step {step}, skipping batch. Batch size: {batch_size}")
+                if hasattr(torch.cuda, 'empty_cache'):
+                    torch.cuda.empty_cache()
+                continue
+            else:
+                raise e
+    
     if is_debug:
         print("[DEBUG][train_one_epoch] End training")
     return total_loss / n_samples
@@ -170,30 +187,55 @@ def run_training(
     is_debug=False
 ):
     pin_memory = torch.cuda.is_available() and str(device).startswith("cuda")
+    # Tối ưu cho setup với 4 CPU cores
+    optimal_workers = min(2, num_workers) if num_workers > 0 else 0  # Giảm workers cho LMDB
     loader_kwargs = dict(
-        num_workers=num_workers,
+        num_workers=optimal_workers,
         collate_fn=collate_pyg,
         pin_memory=pin_memory,
-        persistent_workers=True,  # Không persistent khi debug hoặc với LMDB
-        prefetch_factor=2
+        persistent_workers=False,  # Tắt persistent với LMDB để tránh deadlock
+        prefetch_factor=1 if optimal_workers > 0 else None  # Giảm prefetch
     )
 
+    # Use dynamic batching for better memory utilization
+    from utils import FixedSizeBatchSampler
+    
+    train_sampler = FixedSizeBatchSampler(
+        train_dataset, 
+        max_batch_size=batch_size,
+        max_nodes_per_batch=20000,  # Adjust based on GPU memory
+        shuffle=True
+    )
+    
     train_loader = DataLoader(
         train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
+        batch_sampler=train_sampler,
         **loader_kwargs
     )
+    
+    # For eval, use smaller batches
+    valid_sampler = FixedSizeBatchSampler(
+        valid_dataset,
+        max_batch_size=min(batch_size * 2, 64),
+        max_nodes_per_batch=15000,
+        shuffle=False
+    )
+    
+    test_sampler = FixedSizeBatchSampler(
+        test_dataset,
+        max_batch_size=min(batch_size * 2, 64), 
+        max_nodes_per_batch=15000,
+        shuffle=False
+    )
+    
     valid_loader = DataLoader(
         valid_dataset,
-        batch_size=min(batch_size * 4, 256),
-        shuffle=False,
+        batch_sampler=valid_sampler,
         **loader_kwargs
     )
     test_loader = DataLoader(
         test_dataset,
-        batch_size=min(batch_size * 4, 256),
-        shuffle=False,
+        batch_sampler=test_sampler,
         **loader_kwargs
     )
     if is_debug:
@@ -229,7 +271,10 @@ def run_training(
         print(msg) if logger is None else logger.info(msg)
         if is_debug:
             print(f"[DEBUG][run_training] Epoch {epoch}: start train_one_epoch")
-        train_loss = train_one_epoch(model, train_loader, optimizer, device, margin, max_grad_norm, is_debug=is_debug)
+        # Use gradient accumulation for memory efficiency
+        accumulation_steps = 2 if torch.cuda.get_device_properties(0).total_memory < 20e9 else 1
+        train_loss = train_one_epoch(model, train_loader, optimizer, device, margin, max_grad_norm, 
+                                   accumulation_steps, is_debug=is_debug)
         if is_debug:
             print(f"[DEBUG][run_training] Epoch {epoch}: train_loss = {train_loss}")
         history['train_loss'].append(train_loss)

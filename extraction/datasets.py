@@ -74,6 +74,7 @@ class SubGraphDataset(Dataset):
         self.cache_size = cache_size
         self.valid_entity_ids = set(self.entity2id.keys())
         self.is_debug = is_debug
+        self.edge_cache = OrderedDict()  # Cache cho edge_index
         if self.is_debug:
             print(f"[DEBUG] Dataset initialized with {len(self)} samples")
 
@@ -119,26 +120,26 @@ class SubGraphDataset(Dataset):
             debug_tensor(graph.x, f"Sample{idx}/x", 5)
             debug_tensor(graph.edge_index, f"Sample{idx}/edge_index", 10)
 
-        # Load negative samples nếu là valid/test
+        # Load negative samples nếu là valid/test (OPTIMIZED)
         neg_graphs = []
         if self.num_negatives > 0 and self.split in ["valid", "test"]:
-            # Tính toán vị trí negatives trong LMDB gốc
-            # idx trong self.keys tương ứng với positive sample
-            # negatives sẽ ở vị trí raw_idx + 1, raw_idx + 2, ...
-            raw_idx = idx * (1 + self.num_negatives)  # Vị trí trong LMDB gốc
+            # Batch load negatives để giảm I/O calls
+            raw_idx = idx * (1 + self.num_negatives)
             
-            # Load negatives tương ứng từ LMDB gốc
             with self.env.begin() as txn:
-                all_keys_list = list(txn.cursor().iternext(values=False))
+                # Batch get multiple keys at once
+                neg_keys = []
                 for i in range(1, self.num_negatives + 1):
-                    neg_raw_idx = raw_idx + i
-                    if neg_raw_idx < len(all_keys_list):
-                        neg_key = all_keys_list[neg_raw_idx]
-                        neg_raw = txn.get(neg_key)
-                        if neg_raw and neg_raw[:1] in [b'\x80', b'\x81']:
-                            neg_data = pickle.loads(neg_raw)
-                            neg_graph = self.create_graph(neg_data['triple'], neg_data['nodes'], neg_data['s_dist'], neg_data['t_dist'])
-                            neg_graphs.append(neg_graph)
+                    neg_key = f"{raw_idx + i:010d}".encode()
+                    neg_keys.append(neg_key)
+                
+                # Single transaction for all negatives
+                for neg_key in neg_keys:
+                    neg_raw = txn.get(neg_key)
+                    if neg_raw and neg_raw[:1] in [b'\x80', b'\x81']:
+                        neg_data = pickle.loads(neg_raw)
+                        neg_graph = self.create_graph(neg_data['triple'], neg_data['nodes'], neg_data['s_dist'], neg_data['t_dist'])
+                        neg_graphs.append(neg_graph)
             if self.is_debug and idx < 5:
                 print(f"[DEBUG][Negatives] idx={idx}, num_negatives={len(neg_graphs)}")
                 for i, g in enumerate(neg_graphs[:2]):  # chỉ debug 2 negative đầu
@@ -188,6 +189,14 @@ class SubGraphDataset(Dataset):
     def get_subgraph_edges(self, nodes):
         if self.global_graph is None:
             return torch.empty(2, 0, dtype=torch.long)
+        
+        # Cache key based on nodes
+        nodes_tuple = tuple(sorted(nodes))
+        if nodes_tuple in self.edge_cache:
+            edge_index = self.edge_cache.pop(nodes_tuple)
+            self.edge_cache[nodes_tuple] = edge_index  # Move to end (LRU)
+            return edge_index
+        
         node_set = set(nodes)
         edges = []
         node2idx = {n: i for i, n in enumerate(nodes)}
@@ -204,9 +213,16 @@ class SubGraphDataset(Dataset):
                 nb_raw = self.id2entity[nb]
                 if nb_raw in node_set and nb_raw in node2idx:
                     edges.append((node2idx[node], node2idx[nb_raw]))
+        
         if not edges:
-            return torch.empty(2, 0, dtype=torch.long)
-        edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
+            edge_index = torch.empty(2, 0, dtype=torch.long)
+        else:
+            edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
+        
+        # Cache management
+        if len(self.edge_cache) >= self.cache_size // 2:  # Use half cache for edges
+            self.edge_cache.popitem(last=False)
+        self.edge_cache[nodes_tuple] = edge_index
         return edge_index
 
     def sample_negatives(self, triple, nodes, s_dist, t_dist):
