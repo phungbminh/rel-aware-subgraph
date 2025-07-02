@@ -429,7 +429,7 @@ def main():
 
     logger.info("Pipeline finished successfully!")
 
-    lmdb_summary(train_output, args.output_dir + "/mappings/global_graph.pkl", max_samples=10000)
+    #lmdb_summary(train_output, args.output_dir + "/mappings/global_graph.pkl", max_samples=10000)
 
 if __name__ == "__main__":
     main()

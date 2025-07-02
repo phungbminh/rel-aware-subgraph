@@ -13,7 +13,7 @@ python build_subgraph.py \
     --num-workers 8 \
     --batch-size 200 \
     --use-full-dataset \
-    --num-negatives 10 \
+    --num-negatives 5 \
     --max-nodes-per-graph 1000 \
     --rel-degree-dense
 
