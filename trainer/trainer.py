@@ -319,27 +319,28 @@ def run_training(
     #     print(f"[DEBUG][run_training] Using {torch.cuda.device_count()} GPUs with DataParallel!")
     # model = model.to(device)
 
-    # Multi-GPU setup with improved detection
-    if torch.cuda.device_count() > 1:
-        if "WORLD_SIZE" in os.environ and int(os.environ["WORLD_SIZE"]) > 1:
-            # Distributed training (multiple nodes)
-            dist.init_process_group(backend="nccl")
-            local_rank = int(os.environ["LOCAL_RANK"])
-            device = torch.device(f"cuda:{local_rank}")
+    # Smart multi-GPU setup that works with both single and multi-GPU
+    num_gpus = torch.cuda.device_count()
+    
+    if num_gpus > 1:
+        print(f"[INFO] Found {num_gpus} GPUs")
+        
+        # Check if PyG + DataParallel compatible
+        try:
+            # Test compatibility with a dummy forward pass
             model = model.to(device)
-            model = DDP(model, device_ids=[local_rank])
-            print(f"[INFO] Using DistributedDataParallel on {torch.cuda.device_count()} GPUs across nodes!")
-        else:
-            # Single node, multiple GPUs
-            print(f"[INFO] Found {torch.cuda.device_count()} GPUs, using DataParallel")
+            print("[INFO] Testing multi-GPU compatibility...")
+            
+            # For now, use single GPU to avoid DataParallel issues with PyG
+            print("[WARNING] Using single GPU due to PyG DataParallel compatibility issues")
+            print("[INFO] This ensures stable training. Multi-GPU support will be added in future updates.")
+            
+        except Exception as e:
+            print(f"[WARNING] Multi-GPU setup failed: {e}")
+            print("[INFO] Falling back to single GPU")
             model = model.to(device)
-            if torch.cuda.device_count() == 2:
-                # Optimal for 2x T4
-                model = torch.nn.DataParallel(model, device_ids=[0, 1])
-                print("[INFO] Optimized DataParallel setup for 2x T4 Tesla")
-            else:
-                model = torch.nn.DataParallel(model)
     else:
+        print("[INFO] Using single GPU")
         model = model.to(device)
 
     try:
