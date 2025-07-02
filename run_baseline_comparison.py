@@ -77,7 +77,7 @@ class BaselineTrainer:
             num_batches = 0
             
             for batch_triples, in tqdm(train_loader, desc=f"Epoch {epoch+1}"):
-                batch_triples = batch_triples[0].to(self.device)
+                batch_triples = batch_triples.to(self.device)
                 
                 # Create negative samples
                 neg_triples = create_negative_samples(
@@ -149,7 +149,7 @@ class BaselineTrainer:
             num_batches = 0
             
             for batch_triples, in tqdm(train_loader, desc=f"Epoch {epoch+1}"):
-                batch_triples = batch_triples[0].to(self.device)
+                batch_triples = batch_triples.to(self.device)
                 
                 # Create negative samples
                 neg_triples = create_negative_samples(
@@ -220,7 +220,7 @@ class BaselineTrainer:
             num_batches = 0
             
             for batch_triples, in tqdm(train_loader, desc=f"Epoch {epoch+1}"):
-                batch_triples = batch_triples[0].to(self.device)
+                batch_triples = batch_triples.to(self.device)
                 
                 # Create negative samples (more for RotatE adversarial training)
                 neg_triples = create_negative_samples(
