@@ -113,8 +113,20 @@ class FilteredRankingEvaluator:
         tails = batch[:, 2]
         true_heads = batch[:, 0]
         
-        # Score all head candidates
-        all_scores = model.score_heads(relations, tails)  # [batch_size, num_entities]
+        # Score all head candidates with chunking to avoid OOM
+        chunk_size = 1000  # Process 1K entities at a time
+        all_scores = torch.zeros(batch_size, num_entities, device=self.device)
+        
+        for chunk_start in range(0, num_entities, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, num_entities)
+            chunk_entities = torch.arange(chunk_start, chunk_end, device=self.device)
+            
+            # Expand for batch
+            chunk_entities_batch = chunk_entities.unsqueeze(0).expand(batch_size, -1)
+            
+            # Score this chunk
+            chunk_scores = model.score_heads(relations, tails, chunk_entities_batch)
+            all_scores[:, chunk_start:chunk_end] = chunk_scores
         
         ranks = []
         for i in range(batch_size):
@@ -147,8 +159,20 @@ class FilteredRankingEvaluator:
         relations = batch[:, 1]
         true_tails = batch[:, 2]
         
-        # Score all tail candidates
-        all_scores = model.score_tails(heads, relations)  # [batch_size, num_entities]
+        # Score all tail candidates with chunking to avoid OOM
+        chunk_size = 1000  # Process 1K entities at a time
+        all_scores = torch.zeros(batch_size, num_entities, device=self.device)
+        
+        for chunk_start in range(0, num_entities, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, num_entities)
+            chunk_entities = torch.arange(chunk_start, chunk_end, device=self.device)
+            
+            # Expand for batch
+            chunk_entities_batch = chunk_entities.unsqueeze(0).expand(batch_size, -1)
+            
+            # Score this chunk
+            chunk_scores = model.score_tails(heads, relations, chunk_entities_batch)
+            all_scores[:, chunk_start:chunk_end] = chunk_scores
         
         ranks = []
         for i in range(batch_size):

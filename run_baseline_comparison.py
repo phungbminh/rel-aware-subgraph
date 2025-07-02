@@ -267,17 +267,30 @@ class BaselineTrainer:
         ranks = []
         
         with torch.no_grad():
-            for i in range(min(len(test_triples), 100)):  # Quick eval on 100 samples
+            # Sample much smaller set to avoid OOM
+            num_samples = min(len(test_triples), 20)  # Reduced from 100
+            sample_indices = torch.randperm(len(test_triples))[:num_samples]
+            
+            for i in sample_indices:
                 triple = test_triples[i:i+1].to(self.device)
                 h, r, t = triple[0, 0], triple[0, 1], triple[0, 2]
                 
-                # Score all tails
-                heads = torch.tensor([h], device=self.device)
-                relations = torch.tensor([r], device=self.device)
-                scores = model.score_tails(heads, relations).squeeze()
+                # Score subset of entities to avoid OOM
+                num_candidates = min(1000, self.num_entities)  # Score only 1K entities
+                candidate_entities = torch.randperm(self.num_entities)[:num_candidates].to(self.device)
                 
-                # Compute rank
-                true_score = scores[t]
+                # Add true tail to candidates
+                if t not in candidate_entities:
+                    candidate_entities[0] = t  # Replace first candidate with true tail
+                
+                heads = torch.tensor([h], device=self.device).expand(len(candidate_entities))
+                relations = torch.tensor([r], device=self.device).expand(len(candidate_entities))
+                
+                scores = model.score_triples(heads, relations, candidate_entities)
+                
+                # Find rank of true tail
+                true_idx = (candidate_entities == t).nonzero(as_tuple=True)[0][0]
+                true_score = scores[true_idx]
                 rank = (scores > true_score).sum().item() + 1
                 ranks.append(rank)
         
@@ -404,13 +417,14 @@ def main():
     # Initialize trainer
     trainer = BaselineTrainer(num_entities, num_relations, args.device)
     
-    # Initialize evaluator
+    # Initialize evaluator with smaller batch size to avoid OOM
     evaluator = LinkPredictionEvaluator(
         train_triples=train_triples,
         valid_triples=valid_triples,
         test_triples=test_triples,
         num_entities=num_entities,
         num_relations=num_relations,
+        batch_size=50,  # Much smaller for 45K entities
         device=args.device
     )
     
@@ -435,12 +449,14 @@ def main():
         
         # Evaluate TransE
         print("\\n📈 Evaluating TransE...")
+        torch.cuda.empty_cache()  # Clear cache before evaluation
         transe_results = evaluator.full_evaluation(transe_model)
         transe_results['training_time'] = training_time
         transe_results['model_params'] = transe_model.get_model_size()
         
         results['TransE'] = transe_results
         models['TransE'] = transe_model
+        torch.cuda.empty_cache()  # Clear cache after evaluation
     
     if "complex" in args.models:
         # Train ComplEx
@@ -456,12 +472,14 @@ def main():
         
         # Evaluate ComplEx
         print("\\n📈 Evaluating ComplEx...")
+        torch.cuda.empty_cache()  # Clear cache before evaluation
         complex_results = evaluator.full_evaluation(complex_model)
         complex_results['training_time'] = training_time
         complex_results['model_params'] = complex_model.get_model_size()
         
         results['ComplEx'] = complex_results
         models['ComplEx'] = complex_model
+        torch.cuda.empty_cache()  # Clear cache after evaluation
     
     if "rotate" in args.models:
         # Train RotatE
@@ -478,12 +496,14 @@ def main():
         
         # Evaluate RotatE
         print("\\n📈 Evaluating RotatE...")
+        torch.cuda.empty_cache()  # Clear cache before evaluation
         rotate_results = evaluator.full_evaluation(rotate_model)
         rotate_results['training_time'] = training_time
         rotate_results['model_params'] = rotate_model.get_model_size()
         
         results['RotatE'] = rotate_results
         models['RotatE'] = rotate_model
+        torch.cuda.empty_cache()  # Clear cache after evaluation
     
     if "rasg" in args.models:
         # Train RASG
