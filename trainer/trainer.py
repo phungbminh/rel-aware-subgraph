@@ -123,6 +123,13 @@ def evaluate(model, loader, device, is_debug=False):
         if is_debug:
             print(f"[DEBUG][evaluate] Got batch {step}")
         batch_all, batch_r, batch_size, num_negs = preprocess_batch(batch, device, is_debug=is_debug)
+        
+        if num_negs == 0:
+            # Không có negatives - skip evaluation hoặc warning
+            if is_debug:
+                print(f"[DEBUG][evaluate] No negatives in batch {step}, skipping")
+            continue
+            
         scores = model(batch_all, batch_r).reshape(batch_size, 1 + num_negs)
         pos_scores, neg_scores = scores[:, 0].unsqueeze(1), scores[:, 1:]
         above = (neg_scores > pos_scores).sum(dim=1)
@@ -130,7 +137,13 @@ def evaluate(model, loader, device, is_debug=False):
         batch_ranks = 1.0 + above + equal * 0.5
         all_ranks.append(batch_ranks.cpu())
         if is_debug and step == 0:
+            print(f"[DEBUG][evaluate] pos_scores shape: {pos_scores.shape}, neg_scores shape: {neg_scores.shape}")
             print(f"[DEBUG][evaluate] batch_ranks: {batch_ranks}")
+    
+    if len(all_ranks) == 0:
+        print("[WARNING] No valid evaluation batches found!")
+        return 0.0, [0.0, 0.0, 0.0], torch.tensor([])
+        
     all_ranks = torch.cat(all_ranks)
     mrr = (1.0 / all_ranks).mean().item()
     hits = [(all_ranks <= k).float().mean().item() for k in [1, 3, 10]]

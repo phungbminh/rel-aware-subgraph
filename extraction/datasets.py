@@ -48,14 +48,24 @@ class SubGraphDataset(Dataset):
         # LMDB keys - CHỈ lấy key hợp lệ (value là pickle)
         self.env = lmdb.open(db_path, readonly=True, lock=False, readahead=False)
         with self.env.begin() as txn:
-            self.keys = []
+            all_keys = []
             n_bad = 0
             for k, v in txn.cursor():
                 if v and v[:1] in [b'\x80', b'\x81']:
-                    self.keys.append(k)
+                    all_keys.append(k)
                 else:
                     n_bad += 1
-            print(f"[INFO] Loaded {len(self.keys)} valid subgraphs from {db_path}, {n_bad} key lỗi đã bị loại.")
+            
+            # Nếu split là valid/test và có negatives, chỉ lấy positive samples
+            if split in ["valid", "test"] and num_negatives > 0:
+                self.keys = []
+                for i in range(0, len(all_keys), 1 + num_negatives):
+                    if i < len(all_keys):
+                        self.keys.append(all_keys[i])  # Chỉ lấy positive (mỗi group đầu tiên)
+                print(f"[INFO] Loaded {len(self.keys)} positive samples from {db_path} (filtered from {len(all_keys)} total), {n_bad} key lỗi đã bị loại.")
+            else:
+                self.keys = all_keys
+                print(f"[INFO] Loaded {len(self.keys)} valid subgraphs from {db_path}, {n_bad} key lỗi đã bị loại.")
 
         self.global_graph = global_graph
         self.num_negatives = num_negatives
@@ -109,10 +119,26 @@ class SubGraphDataset(Dataset):
             debug_tensor(graph.x, f"Sample{idx}/x", 5)
             debug_tensor(graph.edge_index, f"Sample{idx}/edge_index", 10)
 
-        # Sinh negative sample nếu cần
+        # Load negative samples nếu là valid/test
         neg_graphs = []
-        if self.num_negatives > 0 and self.split == "train":
-            neg_graphs = self.sample_negatives(data['triple'], data['nodes'], data['s_dist'], data['t_dist'])
+        if self.num_negatives > 0 and self.split in ["valid", "test"]:
+            # Tính toán vị trí negatives trong LMDB gốc
+            # idx trong self.keys tương ứng với positive sample
+            # negatives sẽ ở vị trí raw_idx + 1, raw_idx + 2, ...
+            raw_idx = idx * (1 + self.num_negatives)  # Vị trí trong LMDB gốc
+            
+            # Load negatives tương ứng từ LMDB gốc
+            with self.env.begin() as txn:
+                all_keys_list = list(txn.cursor().iternext(values=False))
+                for i in range(1, self.num_negatives + 1):
+                    neg_raw_idx = raw_idx + i
+                    if neg_raw_idx < len(all_keys_list):
+                        neg_key = all_keys_list[neg_raw_idx]
+                        neg_raw = txn.get(neg_key)
+                        if neg_raw and neg_raw[:1] in [b'\x80', b'\x81']:
+                            neg_data = pickle.loads(neg_raw)
+                            neg_graph = self.create_graph(neg_data['triple'], neg_data['nodes'], neg_data['s_dist'], neg_data['t_dist'])
+                            neg_graphs.append(neg_graph)
             if self.is_debug and idx < 5:
                 print(f"[DEBUG][Negatives] idx={idx}, num_negatives={len(neg_graphs)}")
                 for i, g in enumerate(neg_graphs[:2]):  # chỉ debug 2 negative đầu

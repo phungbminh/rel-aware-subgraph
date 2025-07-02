@@ -162,17 +162,21 @@ def negative_sample_batches(positive_triples, num_negatives, num_nodes, batch_si
         batch = positive_triples[i*batch_size : (i+1)*batch_size]
         negatives = []
         for h, r, t in batch:
-            for _ in range(num_negatives):
-                # Tail negative
-                t_neg = np.random.randint(0, num_nodes)
-                while t_neg == t:
+            neg_count = 0
+            while neg_count < num_negatives:
+                if np.random.rand() < 0.5:
+                    # Tail negative
                     t_neg = np.random.randint(0, num_nodes)
-                negatives.append([h, r, t_neg])
-                # Head negative
-                h_neg = np.random.randint(0, num_nodes)
-                while h_neg == h:
+                    while t_neg == t:
+                        t_neg = np.random.randint(0, num_nodes)
+                    negatives.append([h, r, t_neg])
+                else:
+                    # Head negative
                     h_neg = np.random.randint(0, num_nodes)
-                negatives.append([h_neg, r, t])
+                    while h_neg == h:
+                        h_neg = np.random.randint(0, num_nodes)
+                    negatives.append([h_neg, r, t])
+                neg_count += 1
         yield np.array(negatives, dtype=np.int32)
 
 # ======= Async writer: log đầy đủ, close queue chuẩn ===========
