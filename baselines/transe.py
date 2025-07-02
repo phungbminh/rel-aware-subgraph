@@ -207,6 +207,9 @@ def create_negative_samples(pos_triples: torch.Tensor, num_entities: int,
     Returns:
         neg_triples: Negative triples [batch_size * num_negatives, 3]
     """
+    if len(pos_triples.shape) == 1:
+        pos_triples = pos_triples.unsqueeze(0)  # Make it [1, 3] if it's [3]
+    
     batch_size = pos_triples.size(0)
     device = pos_triples.device
     
@@ -225,17 +228,20 @@ def create_negative_samples(pos_triples: torch.Tensor, num_entities: int,
         else:
             raise ValueError(f"Unknown corruption mode: {corruption_mode}")
         
-        # Corrupt heads
-        head_mask = corrupt_head
-        if head_mask.any():
-            random_heads = torch.randint(0, num_entities, (head_mask.sum(),), device=device)
-            neg_batch[head_mask, 0] = random_heads
-        
-        # Corrupt tails
-        tail_mask = ~corrupt_head
-        if tail_mask.any():
-            random_tails = torch.randint(0, num_entities, (tail_mask.sum(),), device=device)
-            neg_batch[tail_mask, 2] = random_tails
+        # Corrupt heads - iterate to avoid indexing issues
+        for i in range(batch_size):
+            if corrupt_head[i]:
+                # Corrupt head
+                new_head = torch.randint(0, num_entities, (1,), device=device).item()
+                while new_head == neg_batch[i, 0].item():
+                    new_head = torch.randint(0, num_entities, (1,), device=device).item()
+                neg_batch[i, 0] = new_head
+            else:
+                # Corrupt tail
+                new_tail = torch.randint(0, num_entities, (1,), device=device).item()
+                while new_tail == neg_batch[i, 2].item():
+                    new_tail = torch.randint(0, num_entities, (1,), device=device).item()
+                neg_batch[i, 2] = new_tail
         
         neg_triples.append(neg_batch)
     
