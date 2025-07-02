@@ -357,7 +357,7 @@ def train_rasg_baseline(data_root: str, output_dir: str) -> dict:
         "--data-root", data_root,
         "--output-dir", rasg_output_dir,
         "--epochs", "10",  # Consistent with baselines
-        "--batch-size", "96",
+        "--batch-size", "64",
         "--gnn-hidden", "128",  # Increased for better comparison
         "--num-layers", "3",    # Increased for better comparison
         "--lr", "0.001",
@@ -365,10 +365,20 @@ def train_rasg_baseline(data_root: str, output_dir: str) -> dict:
     ]
     
     print(f"Running RASG training: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
     
-    if result.returncode != 0:
-        print(f"RASG training failed: {result.stderr}")
+    # Run with real-time output
+    try:
+        result = subprocess.run(cmd, capture_output=False, text=True, timeout=3600)  # 1 hour timeout
+        
+        if result.returncode != 0:
+            print(f"RASG training failed with return code: {result.returncode}")
+            return {}
+            
+    except subprocess.TimeoutExpired:
+        print("RASG training timed out after 1 hour")
+        return {}
+    except Exception as e:
+        print(f"RASG training failed with exception: {e}")
         return {}
     
     # Load RASG results
@@ -507,9 +517,12 @@ def main():
     
     if "rasg" in args.models:
         # Train RASG
+        print(f"\\n⚠️  RASG training may take 30-60 minutes...")
         rasg_results = train_rasg_baseline(args.data_root, args.output_dir)
         if rasg_results:
             results['RASG'] = rasg_results
+        else:
+            print("⚠️  RASG training failed or timed out - continuing with baseline results only")
     
     # Save all results
     results_file = os.path.join(args.output_dir, "baseline_comparison.json")
