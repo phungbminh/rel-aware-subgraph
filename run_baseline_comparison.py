@@ -384,18 +384,18 @@ def train_rasg_baseline(data_root: str, output_dir: str, epochs: int = 10) -> di
         "--data-root", data_root,
         "--output-dir", rasg_output_dir,
         "--epochs", str(epochs),  # Use same epochs as baselines
-        "--batch-size", "16",
-        "--gnn-hidden", "128",  # Increased for better comparison
-        "--num-layers", "3",    # Increased for better comparison
-        "--lr", "0.001",
-        "--patience", str(max(5, epochs//2))  # Adaptive patience
+        "--batch-size", "64",    # Tăng batch size
+        "--gnn-hidden", "64",   # Giảm hidden size
+        "--num-layers", "2",    # Giảm layers
+        "--lr", "0.002",        # Tăng learning rate
+        "--patience", "3"       # Giảm patience
     ]
     
     print(f"Running RASG training: {' '.join(cmd)}")
     
     # Run with real-time output
     try:
-        result = subprocess.run(cmd, capture_output=False, text=True, timeout=3600)  # 1 hour timeout
+        result = subprocess.run(cmd, capture_output=False, text=True, timeout=7200)  # 2 hour timeout
         
         if result.returncode != 0:
             print(f"RASG training failed with return code: {result.returncode}")
