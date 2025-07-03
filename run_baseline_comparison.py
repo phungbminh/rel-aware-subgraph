@@ -395,7 +395,7 @@ def train_rasg_baseline(data_root: str, output_dir: str, epochs: int = 10) -> di
     
     # Run with real-time output
     try:
-        result = subprocess.run(cmd, capture_output=False, text=True, timeout=7200)  # 2 hour timeout
+        result = subprocess.run(cmd, capture_output=False, text=True, timeout=17200)  # 2 hour timeout
         
         if result.returncode != 0:
             print(f"RASG training failed with return code: {result.returncode}")

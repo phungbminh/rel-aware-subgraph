@@ -161,7 +161,7 @@ if [ ! -d "$DATA_DIR" ]; then
     # Set parameters based on dataset size
     if [ "$DATASET_SIZE" = "5k" ]; then
         MAX_TRIPLES=5000
-        MAX_EVAL=500
+        MAX_EVAL=100
         MAX_NODES=2000
     elif [ "$DATASET_SIZE" = "20k" ]; then
         MAX_TRIPLES=20000
@@ -187,7 +187,7 @@ if [ ! -d "$DATA_DIR" ]; then
         --batch-size 150 \
         --max-triples $MAX_TRIPLES \
         --max-eval-triples $MAX_EVAL \
-        --num-negatives 5 \
+        --num-negatives 50 \
         --max-nodes-per-graph $MAX_NODES \
         --rel-degree-dense
 
