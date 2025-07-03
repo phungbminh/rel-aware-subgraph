@@ -264,7 +264,7 @@ def run_training(
     train_sampler = FixedSizeBatchSampler(
         train_dataset, 
         max_batch_size=batch_size,
-        max_nodes_per_batch=20000,  # Adjust based on GPU memory
+        max_nodes_per_batch=5000,   # Giảm để tránh OOM
         shuffle=True,
         is_full_dataset=is_full_dataset
     )
@@ -279,7 +279,7 @@ def run_training(
     valid_sampler = FixedSizeBatchSampler(
         valid_dataset,
         max_batch_size=min(batch_size * 2, 64),
-        max_nodes_per_batch=15000,
+        max_nodes_per_batch=5000,
         shuffle=False,
         is_full_dataset=is_full_dataset
     )
@@ -287,7 +287,7 @@ def run_training(
     test_sampler = FixedSizeBatchSampler(
         test_dataset,
         max_batch_size=min(batch_size * 2, 64), 
-        max_nodes_per_batch=15000,
+        max_nodes_per_batch=5000,
         shuffle=False,
         is_full_dataset=is_full_dataset
     )
