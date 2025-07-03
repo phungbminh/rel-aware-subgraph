@@ -235,6 +235,7 @@ def run_training(
     device,
     lr=1e-3,
     margin=1.0,
+    eval_every=1,
     weight_decay=1e-5,
     patience=10,
     max_grad_norm=1.0,
@@ -278,16 +279,16 @@ def run_training(
     # For eval, use smaller batches
     valid_sampler = FixedSizeBatchSampler(
         valid_dataset,
-        max_batch_size=4,  # Giảm drastically
-        max_nodes_per_batch=1000,  # Giảm evaluation nodes
+        max_batch_size=1,  # Ultra small
+        max_nodes_per_batch=200,   # Ultra small nodes
         shuffle=False,
         is_full_dataset=is_full_dataset
     )
     
     test_sampler = FixedSizeBatchSampler(
         test_dataset,
-        max_batch_size=4,  # Giảm drastically
-        max_nodes_per_batch=1000,  # Giảm test nodes
+        max_batch_size=1,  # Ultra small
+        max_nodes_per_batch=200,   # Ultra small nodes
         shuffle=False,
         is_full_dataset=is_full_dataset
     )
@@ -364,17 +365,25 @@ def run_training(
         if is_debug:
             print(f"[DEBUG][run_training] Epoch {epoch}: train_loss = {train_loss}")
         history['train_loss'].append(train_loss)
-        val_mrr, val_hits, _ = evaluate(model, valid_loader, device, is_debug=is_debug)
-        if is_debug:
-            print(f"[DEBUG][run_training] Epoch {epoch}: val_mrr = {val_mrr}, val_hits = {val_hits}")
-        history['val_mrr'].append(val_mrr)
-        history['val_hits'].append(val_hits)
-        scheduler.step(val_mrr)
-        msg = (f"Train Loss: {train_loss:.4f} | Valid MRR: {val_mrr:.4f} | "
-               f"Hits@1/3/10: {val_hits[0]:.4f}/{val_hits[1]:.4f}/{val_hits[2]:.4f}")
-        print(msg) if logger is None else logger.info(msg)
-        if val_mrr > best_mrr:
-            best_mrr, no_improve = val_mrr, 0
+        
+        # Skip validation if not eval epoch
+        if epoch % eval_every == 0 or epoch == epochs:
+            val_mrr, val_hits, _ = evaluate(model, valid_loader, device, is_debug=is_debug)
+            if is_debug:
+                print(f"[DEBUG][run_training] Epoch {epoch}: val_mrr = {val_mrr}, val_hits = {val_hits}")
+            history['val_mrr'].append(val_mrr)
+            history['val_hits'].append(val_hits)
+            scheduler.step(val_mrr)
+            msg = (f"Train Loss: {train_loss:.4f} | Valid MRR: {val_mrr:.4f} | "
+                   f"Hits@1/3/10: {val_hits[0]:.4f}/{val_hits[1]:.4f}/{val_hits[2]:.4f}")
+            print(msg) if logger is None else logger.info(msg)
+            if val_mrr > best_mrr:
+                best_mrr, no_improve = val_mrr, 0
+        else:
+            # Skip validation
+            msg = f"Train Loss: {train_loss:.4f} | [Skipped validation]"
+            print(msg) if logger is None else logger.info(msg)
+            no_improve += 1
             if checkpoint_path:
                 state = {
                     'epoch': epoch,

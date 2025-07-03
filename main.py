@@ -86,6 +86,8 @@ def get_args():
                         help="Margin for ranking loss")
     parser.add_argument("--patience", type=int, default=10,
                         help="Early stopping patience")
+    parser.add_argument("--eval-every", type=int, default=1,
+                        help="Evaluate every N epochs (999 = skip validation)")
     parser.add_argument("--num-workers", type=int, default=4,
                         help="Number of data loader workers")
 
@@ -271,6 +273,7 @@ def main():
         device=args.device,
         lr=args.lr,
         margin=args.margin,
+        eval_every=args.eval_every,
         patience=args.patience,
         num_workers=args.num_workers,
         checkpoint_path=checkpoint_path,
