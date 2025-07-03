@@ -383,26 +383,27 @@ def train_rasg_baseline(data_root: str, output_dir: str, epochs: int = 10) -> di
         sys.executable, "main.py",
         "--data-root", data_root,
         "--output-dir", rasg_output_dir,
-        "--epochs", str(epochs),  # Use same epochs as baselines
+        "--epochs", "5",         # Giảm epochs cho 5K test
         "--batch-size", "64",    # Tăng batch size
         "--gnn-hidden", "64",   # Giảm hidden size
         "--num-layers", "2",    # Giảm layers
         "--lr", "0.002",        # Tăng learning rate
-        "--patience", "3"       # Giảm patience
+        "--patience", "10",     # Skip early stopping
+        "--eval-every", "999"   # Skip validation during training
     ]
     
     print(f"Running RASG training: {' '.join(cmd)}")
     
     # Run with real-time output
     try:
-        result = subprocess.run(cmd, capture_output=False, text=True, timeout=17200)  # 2 hour timeout
+        result = subprocess.run(cmd, capture_output=False, text=True, timeout=14400)  # 4 hour timeout
         
         if result.returncode != 0:
             print(f"RASG training failed with return code: {result.returncode}")
             return {}
             
     except subprocess.TimeoutExpired:
-        print("RASG training timed out after 1 hour")
+        print("RASG training timed out after 4 hours")
         return {}
     except Exception as e:
         print(f"RASG training failed with exception: {e}")

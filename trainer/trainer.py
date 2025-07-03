@@ -278,16 +278,16 @@ def run_training(
     # For eval, use smaller batches
     valid_sampler = FixedSizeBatchSampler(
         valid_dataset,
-        max_batch_size=min(batch_size * 2, 64),
-        max_nodes_per_batch=5000,
+        max_batch_size=4,  # Giảm drastically
+        max_nodes_per_batch=1000,  # Giảm evaluation nodes
         shuffle=False,
         is_full_dataset=is_full_dataset
     )
     
     test_sampler = FixedSizeBatchSampler(
         test_dataset,
-        max_batch_size=min(batch_size * 2, 64), 
-        max_nodes_per_batch=5000,
+        max_batch_size=4,  # Giảm drastically
+        max_nodes_per_batch=1000,  # Giảm test nodes
         shuffle=False,
         is_full_dataset=is_full_dataset
     )
