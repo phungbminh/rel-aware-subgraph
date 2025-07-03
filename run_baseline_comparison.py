@@ -384,7 +384,7 @@ def train_rasg_baseline(data_root: str, output_dir: str, epochs: int = 10) -> di
         "--data-root", data_root,
         "--output-dir", rasg_output_dir,
         "--epochs", str(epochs),  # Use same epochs as baselines
-        "--batch-size", "64",
+        "--batch-size", "16",
         "--gnn-hidden", "128",  # Increased for better comparison
         "--num-layers", "3",    # Increased for better comparison
         "--lr", "0.001",
