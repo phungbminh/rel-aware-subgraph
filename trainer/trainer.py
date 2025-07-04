@@ -379,29 +379,31 @@ def run_training(
             print(msg) if logger is None else logger.info(msg)
             if val_mrr > best_mrr:
                 best_mrr, no_improve = val_mrr, 0
+                if checkpoint_path:
+                    state = {
+                        'epoch': epoch,
+                        'state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'scheduler': scheduler.state_dict(),
+                        'best_mrr': best_mrr,
+                        'history': history
+                    }
+                    torch.save(state, checkpoint_path)
+                    if is_debug:
+                        print(f"[DEBUG][run_training] Checkpoint saved at {checkpoint_path}")
+            else:
+                no_improve += 1
         else:
             # Skip validation
             msg = f"Train Loss: {train_loss:.4f} | [Skipped validation]"
             print(msg) if logger is None else logger.info(msg)
             no_improve += 1
-            if checkpoint_path:
-                state = {
-                    'epoch': epoch,
-                    'state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'scheduler': scheduler.state_dict(),
-                    'best_mrr': best_mrr,
-                    'history': history
-                }
-                torch.save(state, checkpoint_path)
-                if is_debug:
-                    print(f"[DEBUG][run_training] Checkpoint saved at {checkpoint_path}")
-        else:
-            no_improve += 1
-            if no_improve >= patience:
-                msg = f"Early stopping after {patience} epochs without improvement"
-                print(msg) if logger is None else logger.info(msg)
-                break
+        
+        # Check early stopping
+        if no_improve >= patience:
+            msg = f"Early stopping after {patience} epochs without improvement"
+            print(msg) if logger is None else logger.info(msg)
+            break
 
     if checkpoint_path and os.path.exists(checkpoint_path):
         state = torch.load(checkpoint_path, map_location=device)
