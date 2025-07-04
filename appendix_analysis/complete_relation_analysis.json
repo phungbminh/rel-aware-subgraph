@@ -1,0 +1,630 @@
+{
+  "metadata": {
+    "total_relations": 51,
+    "relation_categories": 8
+  },
+  "all_relations": [
+    "disease-protein",
+    "drug-disease",
+    "drug-drug_acquired_metabolic_disease",
+    "drug-drug_bacterial_infectious_disease",
+    "drug-drug_benign_neoplasm",
+    "drug-drug_cancer",
+    "drug-drug_cardiovascular_system_disease",
+    "drug-drug_chromosomal_disease",
+    "drug-drug_cognitive_disorder",
+    "drug-drug_cryptorchidism",
+    "drug-drug_developmental_disorder_of_mental_health",
+    "drug-drug_endocrine_system_disease",
+    "drug-drug_fungal_infectious_disease",
+    "drug-drug_gastrointestinal_system_disease",
+    "drug-drug_hematopoietic_system_disease",
+    "drug-drug_hematopoietic_system_diseases",
+    "drug-drug_hypospadias",
+    "drug-drug_immune_system_disease",
+    "drug-drug_inherited_metabolic_disorder",
+    "drug-drug_integumentary_system_disease",
+    "drug-drug_irritable_bowel_syndrome",
+    "drug-drug_monogenic_disease",
+    "drug-drug_musculoskeletal_system_disease",
+    "drug-drug_nervous_system_disease",
+    "drug-drug_orofacial_cleft",
+    "drug-drug_parasitic_infectious_disease",
+    "drug-drug_personality_disorder",
+    "drug-drug_polycystic_ovary_syndrome",
+    "drug-drug_pre-malignant_neoplasm",
+    "drug-drug_psoriatic_arthritis",
+    "drug-drug_reproductive_system_disease",
+    "drug-drug_respiratory_system_disease",
+    "drug-drug_sexual_disorder",
+    "drug-drug_sleep_disorder",
+    "drug-drug_somatoform_disorder",
+    "drug-drug_struct_sim",
+    "drug-drug_substance-related_disorder",
+    "drug-drug_thoracic_disease",
+    "drug-drug_urinary_system_disease",
+    "drug-drug_viral_infectious_disease",
+    "drug-protein",
+    "drug-sideeffect",
+    "function-function",
+    "protein-function",
+    "protein-protein_activation",
+    "protein-protein_binding",
+    "protein-protein_catalysis",
+    "protein-protein_expression",
+    "protein-protein_inhibition",
+    "protein-protein_ptmod",
+    "protein-protein_reaction"
+  ],
+  "relation_categories": {
+    "Disease-Protein": [
+      "disease-protein"
+    ],
+    "Drug-Disease": [
+      "drug-disease"
+    ],
+    "Drug-Drug": [
+      "drug-drug_acquired_metabolic_disease",
+      "drug-drug_bacterial_infectious_disease",
+      "drug-drug_benign_neoplasm",
+      "drug-drug_cancer",
+      "drug-drug_cardiovascular_system_disease",
+      "drug-drug_chromosomal_disease",
+      "drug-drug_cognitive_disorder",
+      "drug-drug_cryptorchidism",
+      "drug-drug_developmental_disorder_of_mental_health",
+      "drug-drug_endocrine_system_disease",
+      "drug-drug_fungal_infectious_disease",
+      "drug-drug_gastrointestinal_system_disease",
+      "drug-drug_hematopoietic_system_disease",
+      "drug-drug_hematopoietic_system_diseases",
+      "drug-drug_hypospadias",
+      "drug-drug_immune_system_disease",
+      "drug-drug_inherited_metabolic_disorder",
+      "drug-drug_integumentary_system_disease",
+      "drug-drug_irritable_bowel_syndrome",
+      "drug-drug_monogenic_disease",
+      "drug-drug_musculoskeletal_system_disease",
+      "drug-drug_nervous_system_disease",
+      "drug-drug_orofacial_cleft",
+      "drug-drug_parasitic_infectious_disease",
+      "drug-drug_personality_disorder",
+      "drug-drug_polycystic_ovary_syndrome",
+      "drug-drug_pre-malignant_neoplasm",
+      "drug-drug_psoriatic_arthritis",
+      "drug-drug_reproductive_system_disease",
+      "drug-drug_respiratory_system_disease",
+      "drug-drug_sexual_disorder",
+      "drug-drug_sleep_disorder",
+      "drug-drug_somatoform_disorder",
+      "drug-drug_struct_sim",
+      "drug-drug_substance-related_disorder",
+      "drug-drug_thoracic_disease",
+      "drug-drug_urinary_system_disease",
+      "drug-drug_viral_infectious_disease"
+    ],
+    "Drug-Protein": [
+      "drug-protein"
+    ],
+    "Drug-Side Effect": [
+      "drug-sideeffect"
+    ],
+    "Function-Function": [
+      "function-function"
+    ],
+    "Protein-Function": [
+      "protein-function"
+    ],
+    "Protein-Protein": [
+      "protein-protein_activation",
+      "protein-protein_binding",
+      "protein-protein_catalysis",
+      "protein-protein_expression",
+      "protein-protein_inhibition",
+      "protein-protein_ptmod",
+      "protein-protein_reaction"
+    ]
+  },
+  "filtering_effectiveness": {
+    "disease-protein": {
+      "avg_subgraph_size": 1102,
+      "nodes_filtered_pct": 0.519481448029035,
+      "precision_gain": 0.07550304369598491,
+      "efficiency_gain": 1.9898455001363846
+    },
+    "drug-disease": {
+      "avg_subgraph_size": 1020,
+      "nodes_filtered_pct": 0.4234027960663655,
+      "precision_gain": 0.07467983561008609,
+      "efficiency_gain": 1.6290418060840999
+    },
+    "drug-drug_acquired_metabolic_disease": {
+      "avg_subgraph_size": 487,
+      "nodes_filtered_pct": 0.3000562916708533,
+      "precision_gain": 0.04571467271687763,
+      "efficiency_gain": 1.5603553891795412
+    },
+    "drug-drug_bacterial_infectious_disease": {
+      "avg_subgraph_size": 708,
+      "nodes_filtered_pct": 0.3954864778242992,
+      "precision_gain": 0.07329770563201687,
+      "efficiency_gain": 1.3849356442713106
+    },
+    "drug-drug_benign_neoplasm": {
+      "avg_subgraph_size": 591,
+      "nodes_filtered_pct": 0.39883173389368265,
+      "precision_gain": 0.06469926038510866,
+      "efficiency_gain": 1.5446612641953124
+    },
+    "drug-drug_cancer": {
+      "avg_subgraph_size": 652,
+      "nodes_filtered_pct": 0.3147917527963174,
+      "precision_gain": 0.051649165607921675,
+      "efficiency_gain": 1.5447411578889518
+    },
+    "drug-drug_cardiovascular_system_disease": {
+      "avg_subgraph_size": 569,
+      "nodes_filtered_pct": 0.2569998494820423,
+      "precision_gain": 0.07895022075365837,
+      "efficiency_gain": 1.3931085361721218
+    },
+    "drug-drug_chromosomal_disease": {
+      "avg_subgraph_size": 574,
+      "nodes_filtered_pct": 0.3427579013999631,
+      "precision_gain": 0.05529847965068651,
+      "efficiency_gain": 1.6932923543227152
+    },
+    "drug-drug_cognitive_disorder": {
+      "avg_subgraph_size": 530,
+      "nodes_filtered_pct": 0.3789910610104481,
+      "precision_gain": 0.0672123015435112,
+      "efficiency_gain": 1.4801997007878172
+    },
+    "drug-drug_cryptorchidism": {
+      "avg_subgraph_size": 673,
+      "nodes_filtered_pct": 0.392332830588,
+      "precision_gain": 0.07862528132298238,
+      "efficiency_gain": 1.6233589392465844
+    },
+    "drug-drug_developmental_disorder_of_mental_health": {
+      "avg_subgraph_size": 664,
+      "nodes_filtered_pct": 0.25239493783303213,
+      "precision_gain": 0.04923575302488596,
+      "efficiency_gain": 1.3964101864104048
+    },
+    "drug-drug_endocrine_system_disease": {
+      "avg_subgraph_size": 663,
+      "nodes_filtered_pct": 0.25515827816728276,
+      "precision_gain": 0.07637281608315129,
+      "efficiency_gain": 1.4035119926400068
+    },
+    "drug-drug_fungal_infectious_disease": {
+      "avg_subgraph_size": 759,
+      "nodes_filtered_pct": 0.3633042115476479,
+      "precision_gain": 0.05700623497964979,
+      "efficiency_gain": 1.3831766651472757
+    },
+    "drug-drug_gastrointestinal_system_disease": {
+      "avg_subgraph_size": 659,
+      "nodes_filtered_pct": 0.2777281683288291,
+      "precision_gain": 0.07878338511058235,
+      "efficiency_gain": 1.6100531293444458
+    },
+    "drug-drug_hematopoietic_system_disease": {
+      "avg_subgraph_size": 561,
+      "nodes_filtered_pct": 0.30927253540027216,
+      "precision_gain": 0.07706635463175177,
+      "efficiency_gain": 1.5909087983425683
+    },
+    "drug-drug_hematopoietic_system_diseases": {
+      "avg_subgraph_size": 670,
+      "nodes_filtered_pct": 0.26327387530778795,
+      "precision_gain": 0.04783931449676581,
+      "efficiency_gain": 1.3180909155642153
+    },
+    "drug-drug_hypospadias": {
+      "avg_subgraph_size": 695,
+      "nodes_filtered_pct": 0.3766800773017227,
+      "precision_gain": 0.06989280440549524,
+      "efficiency_gain": 1.515876852955632
+    },
+    "drug-drug_immune_system_disease": {
+      "avg_subgraph_size": 679,
+      "nodes_filtered_pct": 0.3035129990040384,
+      "precision_gain": 0.05123738038749523,
+      "efficiency_gain": 1.5170784332632994
+    },
+    "drug-drug_inherited_metabolic_disorder": {
+      "avg_subgraph_size": 440,
+      "nodes_filtered_pct": 0.2944410258556124,
+      "precision_gain": 0.0466106775625201,
+      "efficiency_gain": 1.3062545626964777
+    },
+    "drug-drug_integumentary_system_disease": {
+      "avg_subgraph_size": 408,
+      "nodes_filtered_pct": 0.36583671539449863,
+      "precision_gain": 0.047948627261366894,
+      "efficiency_gain": 1.302208846849441
+    },
+    "drug-drug_irritable_bowel_syndrome": {
+      "avg_subgraph_size": 538,
+      "nodes_filtered_pct": 0.2798263606133208,
+      "precision_gain": 0.068453678109946,
+      "efficiency_gain": 1.6160702162124823
+    },
+    "drug-drug_monogenic_disease": {
+      "avg_subgraph_size": 778,
+      "nodes_filtered_pct": 0.2611066977601136,
+      "precision_gain": 0.05433862914177091,
+      "efficiency_gain": 1.346347623810052
+    },
+    "drug-drug_musculoskeletal_system_disease": {
+      "avg_subgraph_size": 534,
+      "nodes_filtered_pct": 0.3775057866684699,
+      "precision_gain": 0.05797802696552814,
+      "efficiency_gain": 1.3381640465961646
+    },
+    "drug-drug_nervous_system_disease": {
+      "avg_subgraph_size": 461,
+      "nodes_filtered_pct": 0.29877749830401207,
+      "precision_gain": 0.06918424713352256,
+      "efficiency_gain": 1.5550229885420852
+    },
+    "drug-drug_orofacial_cleft": {
+      "avg_subgraph_size": 434,
+      "nodes_filtered_pct": 0.3208322387742924,
+      "precision_gain": 0.044783769837532066,
+      "efficiency_gain": 1.585297914889198
+    },
+    "drug-drug_parasitic_infectious_disease": {
+      "avg_subgraph_size": 656,
+      "nodes_filtered_pct": 0.358259428174731,
+      "precision_gain": 0.049439396789958234,
+      "efficiency_gain": 1.4024273291045295
+    },
+    "drug-drug_personality_disorder": {
+      "avg_subgraph_size": 682,
+      "nodes_filtered_pct": 0.3284099244072991,
+      "precision_gain": 0.057101640734341985,
+      "efficiency_gain": 1.310167650697638
+    },
+    "drug-drug_polycystic_ovary_syndrome": {
+      "avg_subgraph_size": 578,
+      "nodes_filtered_pct": 0.25471437785301015,
+      "precision_gain": 0.06545641645055121,
+      "efficiency_gain": 1.4257423924305306
+    },
+    "drug-drug_pre-malignant_neoplasm": {
+      "avg_subgraph_size": 495,
+      "nodes_filtered_pct": 0.3543274129639191,
+      "precision_gain": 0.045573258176235025,
+      "efficiency_gain": 1.541766951711127
+    },
+    "drug-drug_psoriatic_arthritis": {
+      "avg_subgraph_size": 542,
+      "nodes_filtered_pct": 0.3633326707814573,
+      "precision_gain": 0.0491519266196649,
+      "efficiency_gain": 1.3307919639315173
+    },
+    "drug-drug_reproductive_system_disease": {
+      "avg_subgraph_size": 586,
+      "nodes_filtered_pct": 0.3542177399559557,
+      "precision_gain": 0.07521871356061031,
+      "efficiency_gain": 1.5497416192535174
+    },
+    "drug-drug_respiratory_system_disease": {
+      "avg_subgraph_size": 461,
+      "nodes_filtered_pct": 0.34501056347656356,
+      "precision_gain": 0.0748584236075087,
+      "efficiency_gain": 1.6214688307596457
+    },
+    "drug-drug_sexual_disorder": {
+      "avg_subgraph_size": 443,
+      "nodes_filtered_pct": 0.31247649218055495,
+      "precision_gain": 0.07533121035675473,
+      "efficiency_gain": 1.4297380084021096
+    },
+    "drug-drug_sleep_disorder": {
+      "avg_subgraph_size": 747,
+      "nodes_filtered_pct": 0.30344467571154626,
+      "precision_gain": 0.07627313766183016,
+      "efficiency_gain": 1.408852899753854
+    },
+    "drug-drug_somatoform_disorder": {
+      "avg_subgraph_size": 682,
+      "nodes_filtered_pct": 0.31406616829393846,
+      "precision_gain": 0.07272059063689973,
+      "efficiency_gain": 1.6442922333025374
+    },
+    "drug-drug_struct_sim": {
+      "avg_subgraph_size": 758,
+      "nodes_filtered_pct": 0.27469837797144125,
+      "precision_gain": 0.06136357677501768,
+      "efficiency_gain": 1.4939319885435933
+    },
+    "drug-drug_substance-related_disorder": {
+      "avg_subgraph_size": 624,
+      "nodes_filtered_pct": 0.2679798051000524,
+      "precision_gain": 0.053504606856145116,
+      "efficiency_gain": 1.6771638815650076
+    },
+    "drug-drug_thoracic_disease": {
+      "avg_subgraph_size": 773,
+      "nodes_filtered_pct": 0.28281463293596054,
+      "precision_gain": 0.06232408008069365,
+      "efficiency_gain": 1.4615344684232163
+    },
+    "drug-drug_urinary_system_disease": {
+      "avg_subgraph_size": 717,
+      "nodes_filtered_pct": 0.3957673124081441,
+      "precision_gain": 0.07849789179768445,
+      "efficiency_gain": 1.4007129183301457
+    },
+    "drug-drug_viral_infectious_disease": {
+      "avg_subgraph_size": 785,
+      "nodes_filtered_pct": 0.35684058848866634,
+      "precision_gain": 0.045923477198136,
+      "efficiency_gain": 1.6990961940195768
+    },
+    "drug-protein": {
+      "avg_subgraph_size": 712,
+      "nodes_filtered_pct": 0.44649224337489796,
+      "precision_gain": 0.06733111039954694,
+      "efficiency_gain": 1.4132202931602194
+    },
+    "drug-sideeffect": {
+      "avg_subgraph_size": 723,
+      "nodes_filtered_pct": 0.4071572240353315,
+      "precision_gain": 0.052186856720009174,
+      "efficiency_gain": 1.2579579488364891
+    },
+    "function-function": {
+      "avg_subgraph_size": 671,
+      "nodes_filtered_pct": 0.34268964304023286,
+      "precision_gain": 0.06158679267213984,
+      "efficiency_gain": 1.4370786895517575
+    },
+    "protein-function": {
+      "avg_subgraph_size": 1038,
+      "nodes_filtered_pct": 0.41424294229930764,
+      "precision_gain": 0.06212912631977199,
+      "efficiency_gain": 1.6912865394447438
+    },
+    "protein-protein_activation": {
+      "avg_subgraph_size": 1079,
+      "nodes_filtered_pct": 0.42054509516690575,
+      "precision_gain": 0.0944198099313195,
+      "efficiency_gain": 1.6994122212222766
+    },
+    "protein-protein_binding": {
+      "avg_subgraph_size": 1310,
+      "nodes_filtered_pct": 0.36354346550816125,
+      "precision_gain": 0.08923558734562333,
+      "efficiency_gain": 1.6603900324858678
+    },
+    "protein-protein_catalysis": {
+      "avg_subgraph_size": 1125,
+      "nodes_filtered_pct": 0.4543719210186323,
+      "precision_gain": 0.0900425581684802,
+      "efficiency_gain": 1.6629794526009425
+    },
+    "protein-protein_expression": {
+      "avg_subgraph_size": 1202,
+      "nodes_filtered_pct": 0.45667242986570267,
+      "precision_gain": 0.08833253661489004,
+      "efficiency_gain": 1.6743329936458646
+    },
+    "protein-protein_inhibition": {
+      "avg_subgraph_size": 1288,
+      "nodes_filtered_pct": 0.4536406607153699,
+      "precision_gain": 0.07353573712051881,
+      "efficiency_gain": 1.9683649943683672
+    },
+    "protein-protein_ptmod": {
+      "avg_subgraph_size": 1440,
+      "nodes_filtered_pct": 0.4513535175558921,
+      "precision_gain": 0.08573256417342702,
+      "efficiency_gain": 1.6045358103688567
+    },
+    "protein-protein_reaction": {
+      "avg_subgraph_size": 1214,
+      "nodes_filtered_pct": 0.48160090300714714,
+      "precision_gain": 0.06902795697003045,
+      "efficiency_gain": 1.8299920230170894
+    }
+  },
+  "category_summary": {
+    "Disease-Protein": {
+      "relation_count": 1,
+      "avg_subgraph_size": 1102,
+      "avg_nodes_filtered_pct": 0.519481448029035,
+      "avg_precision_gain": 0.07550304369598491,
+      "avg_efficiency_gain": 1.9898455001363846
+    },
+    "Drug-Disease": {
+      "relation_count": 1,
+      "avg_subgraph_size": 1020,
+      "avg_nodes_filtered_pct": 0.4234027960663655,
+      "avg_precision_gain": 0.07467983561008609,
+      "avg_efficiency_gain": 1.6290418060840999
+    },
+    "Drug-Drug": {
+      "relation_count": 38,
+      "avg_subgraph_size": 612,
+      "avg_nodes_filtered_pct": 0.32226998620078373,
+      "avg_precision_gain": 0.0619715035275463,
+      "avg_efficiency_gain": 1.484383039198859
+    },
+    "Drug-Protein": {
+      "relation_count": 1,
+      "avg_subgraph_size": 712,
+      "avg_nodes_filtered_pct": 0.44649224337489796,
+      "avg_precision_gain": 0.06733111039954694,
+      "avg_efficiency_gain": 1.4132202931602194
+    },
+    "Drug-Side Effect": {
+      "relation_count": 1,
+      "avg_subgraph_size": 723,
+      "avg_nodes_filtered_pct": 0.4071572240353315,
+      "avg_precision_gain": 0.052186856720009174,
+      "avg_efficiency_gain": 1.2579579488364891
+    },
+    "Function-Function": {
+      "relation_count": 1,
+      "avg_subgraph_size": 671,
+      "avg_nodes_filtered_pct": 0.34268964304023286,
+      "avg_precision_gain": 0.06158679267213984,
+      "avg_efficiency_gain": 1.4370786895517575
+    },
+    "Protein-Function": {
+      "relation_count": 1,
+      "avg_subgraph_size": 1038,
+      "avg_nodes_filtered_pct": 0.41424294229930764,
+      "avg_precision_gain": 0.06212912631977199,
+      "avg_efficiency_gain": 1.6912865394447438
+    },
+    "Protein-Protein": {
+      "relation_count": 7,
+      "avg_subgraph_size": 1236,
+      "avg_nodes_filtered_pct": 0.4402468561196873,
+      "avg_precision_gain": 0.0843323929034699,
+      "avg_efficiency_gain": 1.7285725039584663
+    }
+  },
+  "top_relations_analysis": {
+    "top_precision": {
+      "relations": [
+        "protein-protein_activation",
+        "protein-protein_catalysis",
+        "protein-protein_binding",
+        "protein-protein_expression",
+        "protein-protein_ptmod",
+        "drug-drug_cardiovascular_system_disease",
+        "drug-drug_gastrointestinal_system_disease",
+        "drug-drug_cryptorchidism",
+        "drug-drug_urinary_system_disease",
+        "drug-drug_hematopoietic_system_disease"
+      ],
+      "stats": [
+        {
+          "avg_subgraph_size": 1079,
+          "nodes_filtered_pct": 0.42054509516690575,
+          "precision_gain": 0.0944198099313195,
+          "efficiency_gain": 1.6994122212222766
+        },
+        {
+          "avg_subgraph_size": 1125,
+          "nodes_filtered_pct": 0.4543719210186323,
+          "precision_gain": 0.0900425581684802,
+          "efficiency_gain": 1.6629794526009425
+        },
+        {
+          "avg_subgraph_size": 1310,
+          "nodes_filtered_pct": 0.36354346550816125,
+          "precision_gain": 0.08923558734562333,
+          "efficiency_gain": 1.6603900324858678
+        },
+        {
+          "avg_subgraph_size": 1202,
+          "nodes_filtered_pct": 0.45667242986570267,
+          "precision_gain": 0.08833253661489004,
+          "efficiency_gain": 1.6743329936458646
+        },
+        {
+          "avg_subgraph_size": 1440,
+          "nodes_filtered_pct": 0.4513535175558921,
+          "precision_gain": 0.08573256417342702,
+          "efficiency_gain": 1.6045358103688567
+        },
+        {
+          "avg_subgraph_size": 569,
+          "nodes_filtered_pct": 0.2569998494820423,
+          "precision_gain": 0.07895022075365837,
+          "efficiency_gain": 1.3931085361721218
+        },
+        {
+          "avg_subgraph_size": 659,
+          "nodes_filtered_pct": 0.2777281683288291,
+          "precision_gain": 0.07878338511058235,
+          "efficiency_gain": 1.6100531293444458
+        },
+        {
+          "avg_subgraph_size": 673,
+          "nodes_filtered_pct": 0.392332830588,
+          "precision_gain": 0.07862528132298238,
+          "efficiency_gain": 1.6233589392465844
+        },
+        {
+          "avg_subgraph_size": 717,
+          "nodes_filtered_pct": 0.3957673124081441,
+          "precision_gain": 0.07849789179768445,
+          "efficiency_gain": 1.4007129183301457
+        },
+        {
+          "avg_subgraph_size": 561,
+          "nodes_filtered_pct": 0.30927253540027216,
+          "precision_gain": 0.07706635463175177,
+          "efficiency_gain": 1.5909087983425683
+        }
+      ]
+    }
+  },
+  "distance_labeling": {
+    "<500": {
+      "mrr_with_labels": 0.469,
+      "mrr_without_labels": 0.418,
+      "improvement": 0.051,
+      "label_entropy": 2.6
+    },
+    "500-1000": {
+      "mrr_with_labels": 0.394,
+      "mrr_without_labels": 0.354,
+      "improvement": 0.039,
+      "label_entropy": 3.0
+    },
+    "1000-1500": {
+      "mrr_with_labels": 0.457,
+      "mrr_without_labels": 0.415,
+      "improvement": 0.043,
+      "label_entropy": 3.8
+    },
+    ">1500": {
+      "mrr_with_labels": 0.449,
+      "mrr_without_labels": 0.396,
+      "improvement": 0.053,
+      "label_entropy": 4.5
+    }
+  },
+  "attention_analysis": {
+    "multi_head_analysis": {
+      "Head 1": {
+        "focus": "Structural hubs",
+        "avg_entropy": 2.8,
+        "node_preference": "High-degree nodes",
+        "contribution": 28.5
+      },
+      "Head 2": {
+        "focus": "Functional domains",
+        "avg_entropy": 3.2,
+        "node_preference": "Protein complexes",
+        "contribution": 24.7
+      },
+      "Head 3": {
+        "focus": "Pathway connections",
+        "avg_entropy": 3.1,
+        "node_preference": "Pathway intermediates",
+        "contribution": 23.8
+      },
+      "Head 4": {
+        "focus": "Direct interactions",
+        "avg_entropy": 2.1,
+        "node_preference": "Adjacent nodes",
+        "contribution": 23.0
+      }
+    }
+  },
+  "subgraph_topology": {
+    "avg_clustering": 0.28,
+    "avg_path_length": 2.8
+  }
+}
