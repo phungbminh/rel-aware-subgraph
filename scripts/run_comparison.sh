@@ -22,7 +22,7 @@ show_help() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  -s, --size SIZE        Dataset size: 5k, 20k, 50k, full (default: 5k)"
+    echo "  -s, --size SIZE        Dataset size: 1k, 5k, 10k, full (default: 5k)"
     echo "  -t, --train NUM        Training samples limit (default: 5000, -1 for no limit)"
     echo "  -v, --valid NUM        Validation samples limit (default: 500, -1 for no limit)"
     echo "  -e, --test NUM         Test samples limit (default: 500, -1 for no limit)"
@@ -35,15 +35,15 @@ show_help() {
     echo "  -h, --help             Show this help"
     echo ""
     echo "Preset configurations:"
-    echo "  5k:   5K train, 500 valid/test, 10 epochs"
-    echo "  20k:  20K train, 2K valid/test, 15 epochs"  
-    echo "  50k:  50K train, 5K valid/test, 20 epochs"
-    echo "  full: No limits, 25 epochs"
+    echo "  1k:   1K train, 100 valid/test, 8 epochs (quick testing)"
+    echo "  5k:   5K train, 500 valid/test, 10 epochs (development)"
+    echo "  10k:  10K train, 1K valid/test, 15 epochs (research)"
+    echo "  full: No limits, 25 epochs (complete evaluation)"
     echo ""
     echo "Examples:"
     echo "  $0                                    # Default 5K comparison"
-    echo "  $0 -s 20k                            # 20K preset"
-    echo "  $0 -t 10000 -v 1000 -e 1000 -p 15   # Custom 10K dataset"
+    echo "  $0 -s 1k                             # Quick 1K test"
+    echo "  $0 -s 10k                            # Research 10K dataset"
     echo "  $0 -s full -p 30                     # Full dataset, 30 epochs"
     echo "  $0 -m 'transe complex' -q            # Quick test with 2 models"
 }
@@ -106,23 +106,23 @@ done
 
 # Apply preset configurations
 case $DATASET_SIZE in
+    1k)
+        TRAIN_LIMIT=1000
+        VALID_LIMIT=100
+        TEST_LIMIT=100
+        EPOCHS=8
+        ;;
     5k)
         TRAIN_LIMIT=5000
         VALID_LIMIT=500
         TEST_LIMIT=500
         EPOCHS=10
         ;;
-    20k)
-        TRAIN_LIMIT=20000
-        VALID_LIMIT=2000
-        TEST_LIMIT=2000
+    10k)
+        TRAIN_LIMIT=10000
+        VALID_LIMIT=1000
+        TEST_LIMIT=1000
         EPOCHS=15
-        ;;
-    50k)
-        TRAIN_LIMIT=50000
-        VALID_LIMIT=5000
-        TEST_LIMIT=5000
-        EPOCHS=20
         ;;
     full)
         TRAIN_LIMIT=-1
@@ -135,7 +135,7 @@ case $DATASET_SIZE in
         ;;
     *)
         echo "❌ Unknown dataset size: $DATASET_SIZE"
-        echo "Valid options: 5k, 20k, 50k, full"
+        echo "Valid options: 1k, 5k, 10k, full"
         exit 1
         ;;
 esac
@@ -159,18 +159,18 @@ if [ ! -d "$DATA_DIR" ]; then
     echo "📦 Building ${DATASET_SIZE} dataset..."
     
     # Set parameters based on dataset size
-    if [ "$DATASET_SIZE" = "5k" ]; then
-        MAX_TRIPLES=5000
+    if [ "$DATASET_SIZE" = "1k" ]; then
+        MAX_TRIPLES=1000
         MAX_EVAL=100
+        MAX_NODES=1000
+    elif [ "$DATASET_SIZE" = "5k" ]; then
+        MAX_TRIPLES=5000
+        MAX_EVAL=500
         MAX_NODES=2000
-    elif [ "$DATASET_SIZE" = "20k" ]; then
-        MAX_TRIPLES=20000
-        MAX_EVAL=2000
-        MAX_NODES=3000
-    elif [ "$DATASET_SIZE" = "50k" ]; then
-        MAX_TRIPLES=50000
-        MAX_EVAL=5000
-        MAX_NODES=4000
+    elif [ "$DATASET_SIZE" = "10k" ]; then
+        MAX_TRIPLES=10000
+        MAX_EVAL=1000
+        MAX_NODES=2500
     else
         # Full dataset
         MAX_TRIPLES=-1
@@ -263,3 +263,8 @@ echo "  - Dataset size: ${DATASET_SIZE} (${TRAIN_LIMIT} train, ${VALID_LIMIT} va
 echo "  - Training: ${EPOCHS} epochs, batch_size=${BATCH_SIZE}"
 echo "  - Models: ${MODELS}"
 echo "  - Device: ${DEVICE}"
+echo ""
+echo "💡 Kaggle-optimized presets:"
+echo "  - 1K: ~15min total (quick testing)"
+echo "  - 5K: ~6h total (development)"  
+echo "  - 10K: ~12h total (research)"

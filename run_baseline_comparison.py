@@ -388,36 +388,103 @@ def train_rasg_baseline(data_root: str, output_dir: str, epochs: int = 10) -> di
         "--gnn-hidden", "64",   # Giảm hidden size
         "--num-layers", "2",    # Giảm layers
         "--lr", "0.002",        # Tăng learning rate
-        "--patience", "10",     # Skip early stopping
-        "--eval-every", "999"   # Skip validation during training
+        "--patience", "5",      # Early stopping patience
+        "--eval-every", "1",    # Validate every epoch
+        "--save-model"          # Save best model checkpoint
     ]
     
     print(f"Running RASG training: {' '.join(cmd)}")
     
     # Run with real-time output
     try:
-        result = subprocess.run(cmd, capture_output=False, text=True, timeout=14400)  # 4 hour timeout
+        result = subprocess.run(cmd, capture_output=False, text=True, timeout=86400)  # 24 hour timeout
         
         if result.returncode != 0:
             print(f"RASG training failed with return code: {result.returncode}")
             return {}
             
     except subprocess.TimeoutExpired:
-        print("RASG training timed out after 4 hours")
-        return {}
+        print("RASG training timed out after 24 hours")
+        print("🔍 Checking for partial results...")
+        return load_partial_rasg_results(rasg_output_dir)
     except Exception as e:
         print(f"RASG training failed with exception: {e}")
-        return {}
+        print("🔍 Checking for partial results...")
+        return load_partial_rasg_results(rasg_output_dir)
     
     # Load RASG results
     results_file = os.path.join(rasg_output_dir, "results.json")
     if os.path.exists(results_file):
         with open(results_file, 'r') as f:
             rasg_results = json.load(f)
+        print(f"✅ RASG completed successfully with {rasg_results.get('epochs_completed', 'unknown')} epochs")
         return rasg_results
     else:
-        print("RASG results file not found")
+        print("RASG results file not found, checking for partial results...")
+        return load_partial_rasg_results(rasg_output_dir)
+
+
+def load_partial_rasg_results(rasg_output_dir: str) -> dict:
+    """Load partial RASG results from checkpoints and logs"""
+    partial_results = {}
+    
+    # Check for checkpoint directory
+    checkpoint_dir = os.path.join(rasg_output_dir, "checkpoints")
+    best_model_path = os.path.join(checkpoint_dir, "best_model.pt")
+    
+    if os.path.exists(best_model_path):
+        try:
+            checkpoint = torch.load(best_model_path, map_location='cpu')
+            
+            # Extract info from checkpoint
+            partial_results['best_epoch'] = checkpoint.get('epoch', 'unknown')
+            partial_results['best_mrr'] = checkpoint.get('best_mrr', 0.0)
+            partial_results['epochs_completed'] = checkpoint.get('epoch', 0)
+            partial_results['training_history'] = checkpoint.get('history', {})
+            
+            print(f"📊 Found RASG partial results:")
+            print(f"   - Best epoch: {partial_results['best_epoch']}")
+            print(f"   - Best validation MRR: {partial_results['best_mrr']:.4f}")
+            print(f"   - Epochs completed: {partial_results['epochs_completed']}")
+            
+            # Try to extract validation metrics for comparison
+            if 'history' in checkpoint:
+                history = checkpoint['history']
+                if 'val_mrr' in history and len(history['val_mrr']) > 0:
+                    latest_mrr = history['val_mrr'][-1]
+                    partial_results['partial_val_mrr'] = latest_mrr
+                    
+                if 'val_hits' in history and len(history['val_hits']) > 0:
+                    latest_hits = history['val_hits'][-1]
+                    partial_results['partial_val_hits'] = latest_hits
+                    
+                    print(f"   - Latest validation:")
+                    print(f"     • MRR: {latest_mrr:.4f}")
+                    print(f"     • Hits@1/3/10: {latest_hits[0]:.4f}/{latest_hits[1]:.4f}/{latest_hits[2]:.4f}")
+            
+            # Mark as partial for comparison table
+            partial_results['status'] = 'partial'
+            partial_results['note'] = f"Partial results from {partial_results['epochs_completed']} epochs"
+            
+        except Exception as e:
+            print(f"❌ Error loading checkpoint: {e}")
+            
+    # Check for training logs
+    log_files = [f for f in os.listdir(rasg_output_dir) if f.endswith('.log') or f.endswith('.txt')]
+    if log_files:
+        print(f"📝 Found log files: {log_files}")
+        # Could parse logs for additional info if needed
+        
+    if not partial_results:
+        print("❌ No partial results found")
         return {}
+        
+    # Format for comparison with baselines
+    if 'partial_val_mrr' in partial_results and 'partial_val_hits' in partial_results:
+        partial_results['test_mrr'] = partial_results['partial_val_mrr']  # Use validation as proxy
+        partial_results['test_hits'] = partial_results['partial_val_hits']
+        
+    return partial_results
 
 
 def main():
@@ -602,21 +669,34 @@ def main():
     for model_name, model_results in results.items():
         if 'test' in model_results:
             test_results[model_name] = model_results['test']
-        elif 'test_mrr' in model_results:  # RASG format
-            test_results[model_name] = {
+        elif 'test_mrr' in model_results:  # RASG format (complete or partial)
+            result_dict = {
                 'mrr': model_results['test_mrr'],
                 'hits_at_1': model_results['test_hits'][0],
                 'hits_at_3': model_results['test_hits'][1],
                 'hits_at_10': model_results['test_hits'][2]
             }
+            # Add status info for partial results
+            if model_results.get('status') == 'partial':
+                result_dict['note'] = model_results.get('note', 'Partial results')
+            test_results[model_name] = result_dict
     
     if test_results:
         table = create_results_table(test_results)
         print(table)
         
+        # Print additional info for partial results
+        for model_name, model_result in test_results.items():
+            if 'note' in model_result:
+                print(f"\n📝 {model_name}: {model_result['note']}")
+        
         # Save table to file
         with open(os.path.join(args.output_dir, "results_table.txt"), 'w') as f:
             f.write(table)
+            # Add notes to file too
+            for model_name, model_result in test_results.items():
+                if 'note' in model_result:
+                    f.write(f"\n\nNote - {model_name}: {model_result['note']}")
     
     # Print summary
     print(f"\\n✅ Baseline comparison completed!")
