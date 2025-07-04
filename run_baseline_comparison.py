@@ -384,7 +384,7 @@ def train_rasg_baseline(data_root: str, output_dir: str, epochs: int = 10) -> di
         "--data-root", data_root,
         "--output-dir", rasg_output_dir,
         "--epochs", "5",         # Giảm epochs cho 5K test
-        "--batch-size", "32",    # Giảm batch size cho 10K
+        "--batch-size", "4",    # Giảm batch size cho 10K
         "--gnn-hidden", "64",   # Giảm hidden size
         "--num-layers", "2",    # Giảm layers
         "--lr", "0.002",        # Tăng learning rate
