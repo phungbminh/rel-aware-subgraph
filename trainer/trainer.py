@@ -265,7 +265,7 @@ def run_training(
     train_sampler = FixedSizeBatchSampler(
         train_dataset, 
         max_batch_size=batch_size,
-        max_nodes_per_batch=5000,   # Giảm để tránh OOM
+        max_nodes_per_batch=2000,   # Giảm drastically cho 10K dataset
         shuffle=True,
         is_full_dataset=is_full_dataset
     )
@@ -280,7 +280,7 @@ def run_training(
     valid_sampler = FixedSizeBatchSampler(
         valid_dataset,
         max_batch_size=1,  # Ultra small
-        max_nodes_per_batch=200,   # Ultra small nodes
+        max_nodes_per_batch=100,   # Ultra conservative cho 10K
         shuffle=False,
         is_full_dataset=is_full_dataset
     )
@@ -288,7 +288,7 @@ def run_training(
     test_sampler = FixedSizeBatchSampler(
         test_dataset,
         max_batch_size=1,  # Ultra small
-        max_nodes_per_batch=200,   # Ultra small nodes
+        max_nodes_per_batch=100,   # Ultra conservative cho 10K
         shuffle=False,
         is_full_dataset=is_full_dataset
     )

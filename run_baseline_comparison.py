@@ -384,7 +384,7 @@ def train_rasg_baseline(data_root: str, output_dir: str, epochs: int = 10) -> di
         "--data-root", data_root,
         "--output-dir", rasg_output_dir,
         "--epochs", "5",         # Giảm epochs cho 5K test
-        "--batch-size", "64",    # Tăng batch size
+        "--batch-size", "32",    # Giảm batch size cho 10K
         "--gnn-hidden", "64",   # Giảm hidden size
         "--num-layers", "2",    # Giảm layers
         "--lr", "0.002",        # Tăng learning rate
@@ -597,9 +597,9 @@ def main():
         # Scale embedding dimension based on dataset size
         embed_dim = min(200, max(100, len(train_triples) // 40))  # Per component
         config['embedding_dim'] = embed_dim
-        config['learning_rate'] = 0.01   # Much higher for ComplEx convergence
-        config['regularization'] = 1e-7  # Much lower regularization
-        config['negative_ratio'] = 5     # Increased negatives for better learning
+        config['learning_rate'] = 0.005  # Balanced learning rate for stable convergence
+        config['regularization'] = 1e-5  # Moderate regularization to prevent overfitting
+        config['negative_ratio'] = 10    # More negatives for better discrimination
         
         start_time = time.time()
         complex_model = trainer.train_complex(train_triples, valid_triples, config, args.output_dir)
@@ -624,11 +624,11 @@ def main():
         # Scale embedding dimension based on dataset size
         embed_dim = min(400, max(200, len(train_triples) // 20))  # Total complex dimension
         config['embedding_dim'] = embed_dim
-        config['negative_ratio'] = 10  # Balanced negatives
-        config['learning_rate'] = 0.002  # Conservative for RotatE stability
-        config['loss_type'] = 'margin'   # Use simpler margin loss instead of adversarial
-        config['margin'] = 3.0          # Smaller margin for smaller datasets
-        config['regularization'] = 1e-6  # Reduced regularization
+        config['negative_ratio'] = 5   # Reduced negatives for stability
+        config['learning_rate'] = 0.001  # Very conservative learning rate
+        config['loss_type'] = 'margin'   # Use margin loss for stability
+        config['margin'] = 6.0          # Standard margin for RotatE
+        config['regularization'] = 1e-5  # Standard regularization
         
         start_time = time.time()
         rotate_model = trainer.train_rotate(train_triples, valid_triples, config, args.output_dir)

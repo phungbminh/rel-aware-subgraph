@@ -37,7 +37,7 @@ show_help() {
     echo "Preset configurations:"
     echo "  1k:   1K train, 100 valid/test, 8 epochs (quick testing)"
     echo "  5k:   5K train, 500 valid/test, 10 epochs (development)"
-    echo "  10k:  10K train, 1K valid/test, 15 epochs (research)"
+    echo "  10k:  8K train, 800 valid/test, 12 epochs (research)"
     echo "  full: No limits, 25 epochs (complete evaluation)"
     echo ""
     echo "Examples:"
@@ -168,9 +168,9 @@ if [ ! -d "$DATA_DIR" ]; then
         MAX_EVAL=500
         MAX_NODES=2000
     elif [ "$DATASET_SIZE" = "10k" ]; then
-        MAX_TRIPLES=10000
-        MAX_EVAL=1000
-        MAX_NODES=2500
+        MAX_TRIPLES=8000   # Giảm để tránh memory issues
+        MAX_EVAL=800       # Giảm eval size  
+        MAX_NODES=2000     # Giảm nodes per subgraph
     else
         # Full dataset
         MAX_TRIPLES=-1
