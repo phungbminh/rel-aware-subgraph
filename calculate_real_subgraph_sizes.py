@@ -93,55 +93,91 @@ class SubgraphSizeCalculator:
         print(f"Initialized calculator for {len(self.all_relations)} relation types")
     
     def load_graph_data(self):
-        """Load graph data using OGB library"""
+        """Load graph data using OGB library (heterogeneous graph format)"""
         print("Loading OGB-BioKG dataset using OGB library...")
         
         try:
             # Load dataset using OGB
             self.dataset = LinkPropPredDataset(name='ogbl-biokg', root=self.ogb_root)
-            self.graph = self.dataset[0]
+            self.graph = self.dataset[0]  # Get graph data
             
             print(f"✅ Dataset loaded successfully!")
-            print(f"📊 Nodes: {self.graph['num_nodes']:,}")
-            print(f"📊 Edges: {self.graph['edge_index'].shape[1]:,}")
-            print(f"📊 Relations: {self.graph['edge_reltype'].max().item() + 1}")
+            print(f"📊 Graph keys: {list(self.graph.keys())}")
             
-            # Build edge dictionary for subgraph extraction
-            edge_index = self.graph['edge_index']
+            # OGB-BioKG is heterogeneous - has edge_index_dict, edge_reltype, num_nodes_dict
+            edge_index_dict = self.graph['edge_index_dict']
             edge_reltype = self.graph['edge_reltype']
+            num_nodes_dict = self.graph['num_nodes_dict']
             
+            print(f"📊 Edge types: {list(edge_index_dict.keys())}")
+            print(f"📊 Node types: {list(num_nodes_dict.keys())}")
+            print(f"📊 Total node types: {len(num_nodes_dict)}")
+            
+            # Build unified graph structure from heterogeneous data
             total_edges = 0
+            total_nodes = sum(num_nodes_dict.values())
             
-            # Group edges by relation type
-            for i in range(edge_index.shape[1]):
-                head = edge_index[0, i].item()
-                tail = edge_index[1, i].item()
-                rel_type = edge_reltype[i].item()
-                
-                # Add to global graph (undirected)
-                self.edge_dict[head].add(tail)
-                self.edge_dict[tail].add(head)
-                
-                # Group by relation type for analysis
-                if rel_type < len(self.all_relations):
-                    relation_name = self.all_relations[rel_type]
-                    self.relation_edges[relation_name].append((head, tail))
-                
-                total_edges += 1
+            print(f"📊 Total nodes across all types: {total_nodes:,}")
             
-            print(f"📊 Graph structure built: {total_edges:,} total edges")
-            print(f"📊 Total nodes in graph: {len(self.edge_dict):,}")
+            # Process each edge type in the heterogeneous graph
+            for edge_type, edge_index in edge_index_dict.items():
+                edge_count = edge_index.shape[1]
+                total_edges += edge_count
+                print(f"  {edge_type}: {edge_count:,} edges")
+                
+                # Add edges to global graph structure
+                for i in range(edge_count):
+                    head = edge_index[0, i].item()
+                    tail = edge_index[1, i].item()
+                    
+                    # Add to global graph (undirected)
+                    self.edge_dict[head].add(tail)
+                    self.edge_dict[tail].add(head)
+                    
+                    # Map edge type to relation name for analysis
+                    if edge_type in edge_reltype:
+                        rel_types = edge_reltype[edge_type]
+                        if i < len(rel_types):
+                            rel_idx = rel_types[i].item() if hasattr(rel_types[i], 'item') else rel_types[i]
+                            if rel_idx < len(self.all_relations):
+                                relation_name = self.all_relations[rel_idx]
+                                self.relation_edges[relation_name].append((head, tail))
+                    else:
+                        # Use edge_type as relation name if no mapping available
+                        clean_edge_type = edge_type.replace('__', '_')
+                        if clean_edge_type in self.all_relations:
+                            self.relation_edges[clean_edge_type].append((head, tail))
+            
+            print(f"\n📊 Graph structure built:")
+            print(f"  Total edges: {total_edges:,}")
+            print(f"  Total nodes in adjacency: {len(self.edge_dict):,}")
             
             # Print relation statistics
-            for i, relation in enumerate(self.all_relations):
+            relations_found = 0
+            for relation in self.all_relations:
                 if relation in self.relation_edges and len(self.relation_edges[relation]) > 0:
                     count = len(self.relation_edges[relation])
                     print(f"  {relation}: {count:,} edges")
+                    relations_found += 1
+            
+            print(f"📊 Found {relations_found} relations with data out of {len(self.all_relations)} total")
+            
+            if relations_found == 0:
+                print("⚠️  No relations mapped, will use edge types directly")
+                # Fallback: use edge types as relations
+                for edge_type, edge_index in edge_index_dict.items():
+                    clean_name = edge_type.replace('__', '_').replace('___', '_')
+                    edges = [(edge_index[0, i].item(), edge_index[1, i].item()) 
+                            for i in range(edge_index.shape[1])]
+                    self.relation_edges[clean_name] = edges
+                    print(f"  {clean_name}: {len(edges):,} edges")
             
             return total_edges > 0
             
         except Exception as e:
             print(f"❌ Error loading OGB dataset: {e}")
+            import traceback
+            traceback.print_exc()
             print("Make sure ogb library is installed: pip install ogb")
             return False
     
@@ -364,14 +400,14 @@ class SubgraphSizeCalculator:
         # Step 1: Load graph data
         if not self.load_graph_data():
             print("❌ Failed to load graph data")
-            return None
+            return None, None  # Return tuple to avoid unpacking error
         
         # Step 2: Calculate subgraph sizes
         results = self.calculate_relation_subgraph_sizes(k=k, sample_size=sample_size, max_nodes=max_nodes)
         
         if not results:
             print("❌ No results generated")
-            return None
+            return None, None  # Return tuple to avoid unpacking error
         
         # Step 3: Analyze results
         summary = self.analyze_subgraph_statistics(results)
@@ -385,13 +421,22 @@ class SubgraphSizeCalculator:
         
         return results, summary
 
-def main():
-    """Main function to run on Kaggle with run_comparison.sh parameters"""
+def main(dataset_size="5k", k_hops=2, tau=2, sample_size=None, ogb_root=None, output_file=None):
+    """Main function to run on Kaggle with run_comparison.sh parameters
+    
+    Args:
+        dataset_size: Dataset size configuration (1k, 5k, 10k, full)
+        k_hops: Number of hops for subgraph extraction (default: 2)
+        tau: Tau parameter (default: 2)
+        sample_size: Override sample size (None for auto)
+        ogb_root: Override OGB root path (None for auto)
+        output_file: Override output filename (None for auto)
+    """
     
     # Configuration matching run_comparison.sh
-    DATASET_SIZE = "5k"  # Options: 1k, 5k, 10k, full
-    K_HOPS = 2  # Same as run_comparison.sh --k 2
-    TAU = 2     # Same as run_comparison.sh --tau 2
+    DATASET_SIZE = dataset_size
+    K_HOPS = k_hops
+    TAU = tau
     
     # Sample sizes matching run_comparison.sh limits
     SAMPLE_SIZE_MAP = {
@@ -401,12 +446,15 @@ def main():
         "full": 1000 # No limit, but sample for efficiency
     }
     
-    SAMPLE_SIZE = SAMPLE_SIZE_MAP.get(DATASET_SIZE, 500)
-    OUTPUT_FILE = f"ogb_biokg_subgraph_sizes_{DATASET_SIZE}.json"
+    # Override with provided parameters
+    SAMPLE_SIZE = sample_size if sample_size is not None else SAMPLE_SIZE_MAP.get(DATASET_SIZE, 500)
+    OUTPUT_FILE = output_file if output_file is not None else f"ogb_biokg_subgraph_sizes_{DATASET_SIZE}.json"
     
     # For Kaggle, adjust OGB root path
     import os
-    if 'KAGGLE_WORKING_DIR' in os.environ:
+    if ogb_root is not None:
+        OGB_ROOT = ogb_root
+    elif 'KAGGLE_WORKING_DIR' in os.environ:
         OGB_ROOT = "/kaggle/working/ogb_data/"  # Kaggle working directory
     else:
         OGB_ROOT = "./data/"  # Local path
@@ -451,9 +499,35 @@ def main():
         return None
 
 if __name__ == "__main__":
+    import argparse
+    
     # Set random seed for reproducibility
     random.seed(42)
     np.random.seed(42)
     
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Calculate real subgraph sizes from OGB-BioKG')
+    parser.add_argument('--dataset-size', '-s', default='5k', choices=['1k', '5k', '10k', 'full'],
+                        help='Dataset size configuration (default: 5k)')
+    parser.add_argument('--k-hops', '-k', type=int, default=2,
+                        help='Number of hops for subgraph extraction (default: 2)')
+    parser.add_argument('--tau', '-t', type=int, default=2,
+                        help='Tau parameter (default: 2)')
+    parser.add_argument('--sample-size', type=int, default=None,
+                        help='Override sample size (default: auto based on dataset-size)')
+    parser.add_argument('--ogb-root', default=None,
+                        help='OGB root directory (default: auto detect)')
+    parser.add_argument('--output-file', '-o', default=None,
+                        help='Output filename (default: auto generate)')
+    
+    args = parser.parse_args()
+    
     # Run main analysis
-    main()
+    main(
+        dataset_size=args.dataset_size,
+        k_hops=args.k_hops,
+        tau=args.tau,
+        sample_size=args.sample_size,
+        ogb_root=args.ogb_root,
+        output_file=args.output_file
+    )
