@@ -187,7 +187,7 @@ class RotatE(BaseKGEModel):
         """
         # Positive scores
         pos_scores = self.forward(pos_triples)  # [batch_size]
-        pos_loss = F.logsigmoid(-pos_scores).mean()
+        pos_loss = -F.logsigmoid(pos_scores).mean()  # Want to maximize pos_scores
         
         # Negative scores with self-adversarial weighting
         neg_scores = self.forward(neg_triples)  # [batch_size * neg_ratio]
@@ -196,7 +196,7 @@ class RotatE(BaseKGEModel):
         neg_weights = F.softmax(neg_scores * self.adversarial_temperature, dim=0).detach()
         
         # Weighted negative loss
-        neg_loss = (neg_weights * F.logsigmoid(neg_scores)).sum()
+        neg_loss = -(neg_weights * F.logsigmoid(-neg_scores)).sum()  # Want to minimize neg_scores
         
         # Total loss
         loss = (pos_loss + neg_loss) / 2

@@ -626,7 +626,7 @@ def main():
         config['embedding_dim'] = embed_dim
         config['negative_ratio'] = 50   # Increased for better learning signal
         config['learning_rate'] = 0.0005  # Standard RotatE learning rate
-        config['loss_type'] = 'adversarial'   # Use self-adversarial loss for RotatE
+        config['loss_type'] = 'margin'   # Use margin loss for stability (adversarial has bugs)
         config['margin'] = 6.0          # Standard margin for RotatE
         config['regularization'] = 1e-5  # Standard regularization
         
