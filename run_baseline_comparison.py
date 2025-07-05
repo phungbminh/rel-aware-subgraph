@@ -645,14 +645,14 @@ def main():
         models['RotatE'] = rotate_model
         torch.cuda.empty_cache()  # Clear cache after evaluation
     
-    if "rasg" in args.models:
-        # Train RASG
-        print(f"\\n⚠️  RASG training may take 30-60 minutes...")
-        rasg_results = train_rasg_baseline(args.data_root, args.output_dir, epochs)
-        if rasg_results:
-            results['RASG'] = rasg_results
-        else:
-            print("⚠️  RASG training failed or timed out - continuing with baseline results only")
+    # if "rasg" in args.models:
+    #     # Train RASG
+    #     print(f"\\n⚠️  RASG training may take 30-60 minutes...")
+    #     rasg_results = train_rasg_baseline(args.data_root, args.output_dir, epochs)
+    #     if rasg_results:
+    #         results['RASG'] = rasg_results
+    #     else:
+    #         print("⚠️  RASG training failed or timed out - continuing with baseline results only")
     
     # Save all results
     results_file = os.path.join(args.output_dir, "baseline_comparison.json")
