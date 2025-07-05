@@ -246,14 +246,14 @@ def run_training(
     is_debug=False
 ):
     pin_memory = torch.cuda.is_available() and str(device).startswith("cuda")
-    # Tối ưu cho setup với 4 CPU cores
-    optimal_workers = min(2, num_workers) if num_workers > 0 else 0  # Giảm workers cho LMDB
+    # Force num_workers=0 for LMDB compatibility - prevents bus errors
+    optimal_workers = 0  # Always use 0 with LMDB databases to prevent bus errors
     loader_kwargs = dict(
         num_workers=optimal_workers,
         collate_fn=collate_pyg,
         pin_memory=pin_memory,
         persistent_workers=False,  # Tắt persistent với LMDB để tránh deadlock
-        prefetch_factor=1 if optimal_workers > 0 else None  # Giảm prefetch
+        prefetch_factor=None  # No prefetch needed with single-threaded loading
     )
 
     # Use dynamic batching for better memory utilization

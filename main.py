@@ -159,9 +159,10 @@ def auto_adjust_for_full_dataset(args):
                 print(f"[AUTO] Increasing num-train-negatives from {args.num_train_negatives} to 2 for multi-GPU")
                 args.num_train_negatives = 2
                 
-            if args.num_workers < 6:
-                print(f"[AUTO] Increasing num-workers from {args.num_workers} to 6 for multi-GPU")
-                args.num_workers = 6
+            # LMDB requires num_workers=0 to prevent bus errors
+            if args.num_workers > 0:
+                print(f"[AUTO] Setting num-workers to 0 (was {args.num_workers}) - LMDB compatibility")
+                args.num_workers = 0
                 
         else:
             # Single GPU setup (P100 16GB)
@@ -174,9 +175,10 @@ def auto_adjust_for_full_dataset(args):
                 print(f"[AUTO] Reducing num-train-negatives from {args.num_train_negatives} to 1 for single GPU")
                 args.num_train_negatives = 1
                 
-            if args.num_workers > 2:
-                print(f"[AUTO] Reducing num-workers from {args.num_workers} to 2 for single GPU")
-                args.num_workers = 2
+            # LMDB requires num_workers=0 to prevent bus errors
+            if args.num_workers > 0:
+                print(f"[AUTO] Setting num-workers to 0 (was {args.num_workers}) - LMDB compatibility")
+                args.num_workers = 0
         
         # Increase patience for full dataset
         if args.patience < 15:
@@ -260,6 +262,11 @@ def main():
     if logger: logger.info(f"Model initialized with {num_params / 1e6:.2f}M parameters")
 
     # ===== Huấn luyện =====
+    # Add LMDB safety check before training
+    if any('lmdb' in str(path).lower() for path in [args.train_db, args.valid_db, args.test_db]):
+        print("[SAFETY] LMDB detected - enforcing num_workers=0 to prevent bus errors")
+        args.num_workers = 0
+    
     if logger: logger.info("Starting training...")
     checkpoint_path = os.path.join(args.output_dir, "checkpoints", "best_model.pt") if args.save_model else "best_model.pt"
 
