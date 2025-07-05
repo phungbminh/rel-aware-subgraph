@@ -622,11 +622,11 @@ def main():
         config['epochs'] = epochs
         config['batch_size'] = args.batch_size
         # Scale embedding dimension based on dataset size
-        embed_dim = min(400, max(200, len(train_triples) // 20))  # Total complex dimension
+        embed_dim = min(1000, max(500, len(train_triples) // 10))  # Increased for better capacity
         config['embedding_dim'] = embed_dim
-        config['negative_ratio'] = 5   # Reduced negatives for stability
-        config['learning_rate'] = 0.001  # Very conservative learning rate
-        config['loss_type'] = 'margin'   # Use margin loss for stability
+        config['negative_ratio'] = 50   # Increased for better learning signal
+        config['learning_rate'] = 0.0005  # Standard RotatE learning rate
+        config['loss_type'] = 'adversarial'   # Use self-adversarial loss for RotatE
         config['margin'] = 6.0          # Standard margin for RotatE
         config['regularization'] = 1e-5  # Standard regularization
         
