@@ -217,8 +217,9 @@ class BaselineTrainer:
             **{k: v for k, v in config.items() if k not in ['learning_rate', 'epochs', 'batch_size', 'negative_ratio', 'loss_type']}
         ).to(self.device)
         
-        # Optimizer
+        # Optimizer with learning rate scheduler
         optimizer = optim.Adam(model.parameters(), lr=config['learning_rate'])
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.8, patience=2, verbose=True)
         
         # Training loop
         train_loader = self.create_triple_dataset(train_triples, config['batch_size'])
@@ -256,6 +257,9 @@ class BaselineTrainer:
                 val_mrr = val_metrics['mrr']
                 
                 print(f"Epoch {epoch+1}: Loss={avg_loss:.4f}, Val MRR={val_mrr:.4f}")
+                
+                # Update learning rate based on validation performance
+                scheduler.step(val_mrr)
                 
                 if val_mrr > best_mrr:
                     best_mrr = val_mrr
@@ -621,13 +625,13 @@ def main():
         config = get_rotate_config('ogbl-biokg')
         config['epochs'] = epochs
         config['batch_size'] = args.batch_size
-        # Scale embedding dimension based on dataset size
-        embed_dim = min(1000, max(500, len(train_triples) // 10))  # Increased for better capacity
+        # Conservative config for small dataset (1K triples, 45K entities)
+        embed_dim = min(400, max(200, len(train_triples) // 5))  # Smaller for 1K dataset
         config['embedding_dim'] = embed_dim
-        config['negative_ratio'] = 50   # Increased for better learning signal
-        config['learning_rate'] = 0.0005  # Standard RotatE learning rate
-        config['loss_type'] = 'margin'   # Use margin loss for stability (adversarial has bugs)
-        config['margin'] = 6.0          # Standard margin for RotatE
+        config['negative_ratio'] = 10   # Reduced for small dataset
+        config['learning_rate'] = 0.001  # Higher for faster convergence on small data
+        config['loss_type'] = 'margin'   # Use margin loss for stability
+        config['margin'] = 2.0          # Smaller margin for small dataset
         config['regularization'] = 1e-5  # Standard regularization
         
         start_time = time.time()
