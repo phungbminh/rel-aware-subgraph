@@ -203,7 +203,7 @@ class SubgraphVisualizer:
                 t_dist = node_data.get('t_dist', 0)
                 distance_text.append(f"Node {node}: d(h)={s_dist}, d(t)={t_dist}")
             
-            ax.text(0.02, 0.98, "\\n".join(distance_text[:5]), transform=ax.transAxes, 
+            ax.text(0.02, 0.98, "; ".join(distance_text[:5]), transform=ax.transAxes, 
                    fontsize=8, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat'))
         
         # Title and formatting
@@ -211,7 +211,7 @@ class SubgraphVisualizer:
         tail_name = self.id2entity.get(tail_id, f"E{tail_id}")
         rel_name = self.id2relation.get(rel_id, f"R{rel_id}")
         
-        ax.set_title(f"Subgraph for Triple: ({head_name}, {rel_name}, {tail_name})\\n"
+        ax.set_title(f"Subgraph for Triple: ({head_name}, {rel_name}, {tail_name}) - "
                     f"Nodes: {len(G.nodes())}, Edges: {len(G.edges())}", 
                     fontsize=12, fontweight='bold')
         
@@ -286,7 +286,7 @@ class SubgraphVisualizer:
                 
                 # Title
                 rel_name = self.id2relation.get(rel_id, f"R{rel_id}")
-                ax.set_title(f"Triple {i+1}: R{rel_id}\\n{len(G.nodes())} nodes", fontsize=10)
+                ax.set_title(f"Triple {i+1}: R{rel_id} - {len(G.nodes())} nodes", fontsize=10)
                 ax.axis('off')
                 
             except Exception as e:
@@ -363,7 +363,7 @@ def main():
             except Exception as e:
                 print(f"❌ Failed to create detailed plot {i+1}: {e}")
         
-        print(f"\\n🎉 Visualization completed! Check {args.output_dir}/ for results")
+        print(f"🎉 Visualization completed! Check {args.output_dir}/ for results")
         print(f"📁 Files created:")
         print(f"   - subgraphs_grid_{args.num_samples}.png (overview)")
         print(f"   - detailed_subgraph_*.png (individual detailed plots)")

@@ -1,0 +1,25 @@
+{
+  "num_entities": 45085,
+  "num_relations": 51,
+  "created_time": "2025-07-04 07:48:28",
+  "args": {
+    "ogb_root": "./data/ogb/",
+    "output_dir": "./comparison_1k_db",
+    "k": 2,
+    "tau": 2,
+    "num_workers": 6,
+    "batch_size": 150,
+    "max_triples": 1000,
+    "max_eval_triples": 100,
+    "use_full_dataset": false,
+    "num_negatives": 50,
+    "undirected": false,
+    "rel_degree_dense": true,
+    "max_nodes_per_graph": 1000
+  },
+  "split_sizes": {
+    "train": 4762678,
+    "valid": 162886,
+    "test": 162870
+  }
+}

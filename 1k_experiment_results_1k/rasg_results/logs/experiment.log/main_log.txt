@@ -1,0 +1,48 @@
+2025-07-04 18:01:11,530 - INFO - 
+===== Experiment Configuration =====
+           data_root: ./comparison_1k_db
+         mapping_dir: mappings
+          output_dir: ./1k_experiment_results_1k/rasg_results
+            train_db: train.lmdb
+            valid_db: valid.lmdb
+             test_db: test.lmdb
+        global_graph: mappings/global_graph.pkl
+       num_negatives: 5
+ num_train_negatives: 1
+    use_full_dataset: False
+              epochs: 5
+          batch_size: 32
+                  lr: 0.002
+              margin: 1.0
+            patience: 5
+          eval_every: 1
+         num_workers: 4
+        node_emb_dim: 32
+         rel_emb_dim: 64
+          gnn_hidden: 64
+          num_layers: 2
+             att_dim: 128
+           att_heads: 4
+            max_dist: 10
+             dropout: 0.2
+              device: cuda
+                seed: 42
+          save_model: True
+            is_debug: False
+========================================
+2025-07-04 18:01:11,530 - INFO - Loading mappings and global graph...
+2025-07-04 18:01:11,589 - INFO - Loaded mappings: 45085 entities, 51 relations
+2025-07-04 18:01:11,590 - INFO - Global graph loaded in 0.06s
+2025-07-04 18:01:11,590 - INFO - Creating datasets...
+2025-07-04 18:01:11,750 - INFO - Dataset sizes: Train=1000, Valid=850, Test=850
+2025-07-04 18:01:11,750 - INFO - Initializing model...
+2025-07-04 18:01:11,797 - INFO - Model initialized with 0.11M parameters
+2025-07-04 18:01:11,798 - INFO - Starting training...
+2025-07-04 20:34:08,832 - INFO - 
+===== Final Results =====
+2025-07-04 20:34:08,833 - INFO - Best Validation MRR: 0.4211
+2025-07-04 20:34:08,833 - INFO - Test MRR: 0.4044
+2025-07-04 20:34:08,833 - INFO - Test Hits@1: 0.1541
+2025-07-04 20:34:08,833 - INFO - Test Hits@3: 0.5047
+2025-07-04 20:34:08,833 - INFO - Test Hits@10: 1.0000
+2025-07-04 20:34:08,833 - INFO - Results saved to ./1k_experiment_results_1k/rasg_results
