@@ -95,11 +95,11 @@ class FixedSizeBatchSampler(Sampler):
         self.shuffle = shuffle
         self.is_full_dataset = is_full_dataset
         
-        # Optimize for full dataset
+        # Optimize for full dataset - much more aggressive reduction
         if is_full_dataset:
-            # More conservative limits for large datasets
-            self.max_batch_size = min(max_batch_size, 8)
-            self.max_nodes_per_batch = min(max_nodes_per_batch, 15000)
+            # MUCH more conservative limits for large datasets to prevent OOM
+            self.max_batch_size = min(max_batch_size, 2)  # Reduce from 8 to 2
+            self.max_nodes_per_batch = min(max_nodes_per_batch, 500)  # Reduce from 15000 to 500
             print(f"[AUTO] Adjusted for full dataset: max_batch_size={self.max_batch_size}, max_nodes_per_batch={self.max_nodes_per_batch}")
         
         # Pre-compute graph sizes with progress bar for large datasets

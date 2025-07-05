@@ -71,9 +71,17 @@ def preprocess_batch(batch, device, is_debug=False):
 
 def train_one_epoch(model, loader, optimizer, device, margin=1.0, max_grad_norm=1.0, 
                    accumulation_steps=1, negative_sampler=None, num_train_negatives=1, is_debug=False):
+    import time
+    start_time = time.time()
+    
     model.train()
     total_loss, n_samples = 0, 0
     optimizer.zero_grad(set_to_none=True)
+    
+    # Disable autograd anomaly detection for speed
+    torch.autograd.set_detect_anomaly(False)
+    
+    print(f"[TRAINING] Starting epoch with {len(loader)} batches, accumulation_steps={accumulation_steps}")
     
     if is_debug:
         print("[DEBUG][train_one_epoch] Start training")
@@ -125,18 +133,37 @@ def train_one_epoch(model, loader, optimizer, device, margin=1.0, max_grad_norm=
             total_loss += loss.item() * accumulation_steps
             n_samples += len(pos_graphs)
             
-            # Memory cleanup
-            if step % 10 == 0:
+            # Aggressive memory cleanup for large datasets
+            if step % 5 == 0:  # More frequent cleanup
                 torch.cuda.empty_cache()
+                
+            # Progress monitoring for slow training
+            if step % 100 == 0 and step > 0:
+                elapsed = time.time() - start_time
+                avg_time_per_step = elapsed / step
+                eta_seconds = avg_time_per_step * (len(loader) - step)
+                eta_hours = eta_seconds / 3600
+                print(f"[PROGRESS] Step {step}/{len(loader)}, ETA: {eta_hours:.1f}h, {avg_time_per_step:.1f}s/step")
                 
         except RuntimeError as e:
             if "out of memory" in str(e):
-                print(f"[WARNING] OOM at step {step}, skipping batch")
+                print(f"[WARNING] OOM at step {step}, skipping batch and reducing memory")
                 if hasattr(torch.cuda, 'empty_cache'):
                     torch.cuda.empty_cache()
+                # Track OOM occurrences
+                if not hasattr(train_one_epoch, 'oom_count'):
+                    train_one_epoch.oom_count = 0
+                train_one_epoch.oom_count += 1
+                
+                if train_one_epoch.oom_count > 5:
+                    print(f"[ERROR] Too many OOM errors ({train_one_epoch.oom_count}), stopping epoch")
+                    break
                 continue
             else:
                 raise e
+    
+    elapsed_total = time.time() - start_time
+    print(f"[TRAINING] Epoch completed in {elapsed_total/60:.1f} minutes, avg {elapsed_total/len(loader):.1f}s/step")
     
     if is_debug:
         print("[DEBUG][train_one_epoch] End training")
@@ -262,10 +289,25 @@ def run_training(
     # Check if using full dataset
     is_full_dataset = len(train_dataset) > 1000  # Heuristic for full dataset
     
+    # Drastically reduce memory usage for 10K dataset
+    # Detect dataset size and adjust accordingly
+    dataset_size = len(train_dataset)
+    if dataset_size >= 8000:  # 10K dataset
+        max_nodes_training = 400  # Much smaller for 10K
+        max_batch_training = 2    # Smaller batch
+    elif dataset_size >= 5000:  # 5K dataset  
+        max_nodes_training = 800  # Medium
+        max_batch_training = 4    # Medium batch
+    else:  # 1K dataset
+        max_nodes_training = 1200  # Larger
+        max_batch_training = batch_size  # Original batch size
+    
+    print(f"[MEMORY] Detected dataset size: {dataset_size}, using max_nodes={max_nodes_training}, max_batch={max_batch_training}")
+    
     train_sampler = FixedSizeBatchSampler(
         train_dataset, 
-        max_batch_size=batch_size,
-        max_nodes_per_batch=2000,   # Giảm drastically cho 10K dataset
+        max_batch_size=max_batch_training,
+        max_nodes_per_batch=max_nodes_training,
         shuffle=True,
         is_full_dataset=is_full_dataset
     )
@@ -276,19 +318,31 @@ def run_training(
         **loader_kwargs
     )
     
-    # For eval, use smaller batches
+    # For eval, use even smaller batches based on dataset size
+    if dataset_size >= 8000:  # 10K dataset
+        max_nodes_eval = 200  # Very small for memory
+        max_batch_eval = 1    # Single sample
+    elif dataset_size >= 5000:  # 5K dataset
+        max_nodes_eval = 300  # Small
+        max_batch_eval = 1    # Single sample
+    else:  # 1K dataset
+        max_nodes_eval = 500  # Larger
+        max_batch_eval = 2    # Can handle more
+    
+    print(f"[MEMORY] Eval batching: max_nodes={max_nodes_eval}, max_batch={max_batch_eval}")
+    
     valid_sampler = FixedSizeBatchSampler(
         valid_dataset,
-        max_batch_size=1,  # Ultra small
-        max_nodes_per_batch=100,   # Ultra conservative cho 10K
+        max_batch_size=max_batch_eval,
+        max_nodes_per_batch=max_nodes_eval,
         shuffle=False,
         is_full_dataset=is_full_dataset
     )
     
     test_sampler = FixedSizeBatchSampler(
         test_dataset,
-        max_batch_size=1,  # Ultra small
-        max_nodes_per_batch=100,   # Ultra conservative cho 10K
+        max_batch_size=max_batch_eval,
+        max_nodes_per_batch=max_nodes_eval,
         shuffle=False,
         is_full_dataset=is_full_dataset
     )
@@ -322,6 +376,18 @@ def run_training(
 
     # Smart multi-GPU setup that works with both single and multi-GPU
     num_gpus = torch.cuda.device_count()
+    
+    # Add memory monitoring
+    if torch.cuda.is_available():
+        gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+        print(f"[MEMORY] GPU memory available: {gpu_memory_gb:.1f}GB")
+        
+        def log_memory_usage(prefix=""):
+            allocated = torch.cuda.memory_allocated() / 1e9
+            cached = torch.cuda.memory_reserved() / 1e9
+            print(f"[MEMORY] {prefix} Allocated: {allocated:.2f}GB, Reserved: {cached:.2f}GB")
+        
+        log_memory_usage("Initial")
     
     if num_gpus > 1:
         print(f"[INFO] Found {num_gpus} GPUs")
@@ -358,8 +424,19 @@ def run_training(
         print(msg) if logger is None else logger.info(msg)
         if is_debug:
             print(f"[DEBUG][run_training] Epoch {epoch}: start train_one_epoch")
-        # Use gradient accumulation for memory efficiency
-        accumulation_steps = 2 if torch.cuda.get_device_properties(0).total_memory < 20e9 else 1
+        # More aggressive gradient accumulation for large datasets
+        gpu_memory = torch.cuda.get_device_properties(0).total_memory if torch.cuda.is_available() else 16e9
+        train_size = len(train_dataset)
+        
+        if train_size >= 8000:  # 10K dataset
+            accumulation_steps = 4  # More accumulation for memory
+            print(f"[MEMORY] Large dataset detected ({train_size}), using accumulation_steps={accumulation_steps}")
+        elif train_size >= 5000:  # 5K dataset
+            accumulation_steps = 2  # Medium accumulation
+            print(f"[MEMORY] Medium dataset detected ({train_size}), using accumulation_steps={accumulation_steps}")
+        else:
+            accumulation_steps = 1  # No accumulation for small datasets
+            print(f"[MEMORY] Small dataset detected ({train_size}), using accumulation_steps={accumulation_steps}")
         train_loss = train_one_epoch(model, train_loader, optimizer, device, margin, max_grad_norm, 
                                    accumulation_steps, negative_sampler, num_train_negatives, is_debug=is_debug)
         if is_debug:
