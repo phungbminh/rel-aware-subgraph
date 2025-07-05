@@ -231,8 +231,8 @@ class RotatE(BaseKGEModel):
         # Expand positive scores to match: [batch_size, neg_ratio]
         pos_scores = pos_scores.unsqueeze(1).expand(-1, neg_ratio)
         
-        # Standard margin ranking loss: max(0, margin - pos_score + neg_score)
-        loss = F.relu(self.margin - pos_scores + neg_scores).mean()
+        # Standard margin ranking loss: max(0, margin + neg_score - pos_score)
+        loss = F.relu(self.margin + neg_scores - pos_scores).mean()
         
         # Add regularization
         reg_loss = self.regularization_loss()
